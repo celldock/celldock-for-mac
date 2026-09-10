@@ -117,6 +117,12 @@ func run(cfg config) error {
 	if err != nil {
 		return store.fail("sim", fmt.Errorf("read IMEI: %w", err))
 	}
+	profile, err := readSIMProfile(transport, imsi, imei)
+	if err != nil {
+		// Some modems/cards do not expose EF_AD through CRSM. Preserve the
+		// existing fallback in that case, but make the missing evidence visible.
+		fmt.Fprintf(os.Stderr, "SIM MNC length unavailable: %v; using IMSI-derived PLMN\n", err)
+	}
 	aka := simauth.NewAKAProvider(transport)
 	simAdapter := runtimehost.NewReaderSIMAdapter(&simWithIMSI{AKAProvider: aka, imsi: imsi})
 	defer simAdapter.Close()
@@ -124,11 +130,8 @@ func run(cfg config) error {
 	access := runtimehost.NewModemAccessAdapter(modem)
 	prepared, err := identity.PrepareStart(identity.PrepareStartInput{
 		DeviceID: cfg.OuterInterface + "-imei-" + imei,
-		Profile: identity.Profile{
-			IMSI: imsi,
-			IMEI: imei,
-		},
-		Access: access,
+		Profile:  profile,
+		Access:   access,
 	})
 	if err != nil {
 		return store.fail("identity", fmt.Errorf("prepare carrier identity: %w", err))
