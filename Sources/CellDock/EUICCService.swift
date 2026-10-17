@@ -47,6 +47,37 @@ private final class EUICCTransportContext {
         self.modemService = modemService
     }
 
+    /// Profiles are enabled and disabled without an eUICC REFRESH, so the modem keeps
+    /// the previous profile's cached ICCID/IMSI. Power-cycle the SIM with CFUN=0/1,
+    /// which re-reads the card without the USB re-enumeration of CFUN=1,1, then wait
+    /// for the SIM to report READY so the follow-up SIM refresh doesn't hit "SIM busy".
+    /// Skipped unless the modem is at full functionality, to respect airplane mode.
+    func reloadSIM() {
+        let state = modemService.executeEUICCATCommand("AT+CFUN?", timeout: 5_000)
+        guard state.isSuccess,
+              state.output.replacingOccurrences(of: " ", with: "").contains("+CFUN:1") else {
+            euiccLogger.info("Skipped SIM reload after eSIM profile switch: modem is not at CFUN=1")
+            return
+        }
+        let off = modemService.executeEUICCATCommand("AT+CFUN=0", timeout: 15_000)
+        var on = modemService.executeEUICCATCommand("AT+CFUN=1", timeout: 15_000)
+        if !on.isSuccess {
+            on = modemService.executeEUICCATCommand("AT+CFUN=1", timeout: 15_000)
+        }
+        guard off.isSuccess, on.isSuccess else {
+            euiccLogger.error(
+                "SIM reload after eSIM profile switch failed cfun0=\(off.isSuccess, privacy: .public) cfun1=\(on.isSuccess, privacy: .public)"
+            )
+            return
+        }
+        for _ in 0..<30 {
+            Thread.sleep(forTimeInterval: 1)
+            let pin = modemService.executeEUICCATCommand("AT+CPIN?", timeout: 5_000)
+            if pin.isSuccess, pin.output.contains("READY") { return }
+        }
+        euiccLogger.error("SIM did not report READY within 30 s after eSIM profile switch")
+    }
+
     var lastHTTPFailure: EUICCHTTPFailure? {
         failureLock.lock()
         defer { failureLock.unlock() }
@@ -274,14 +305,14 @@ final class EUICCService {
     }
 
     func enable(profile: ESIMProfile) {
-        perform(operation: .enabling(profile.iccid)) { session, _ in
+        perform(operation: .enabling(profile.iccid), reloadsSIM: true) { session, _ in
             try Self.runProfileAction(session, iccid: profile.iccid, action: celldock_euicc_enable_profile)
             return try Self.readSnapshot(session)
         }
     }
 
     func disable(profile: ESIMProfile) {
-        perform(operation: .disabling(profile.iccid)) { session, _ in
+        perform(operation: .disabling(profile.iccid), reloadsSIM: true) { session, _ in
             try Self.runProfileAction(session, iccid: profile.iccid, action: celldock_euicc_disable_profile)
             return try Self.readSnapshot(session)
         }
@@ -337,6 +368,7 @@ final class EUICCService {
     private func perform(
         operation: ESIMOperation,
         classifyDetectionFailure: Bool = false,
+        reloadsSIM: Bool = false,
         work: @escaping (OpaquePointer, EUICCTransportContext) throws -> EUICCSnapshot
     ) {
         var pending = operation == .detecting ? EUICCSnapshot.empty : currentSnapshot
@@ -356,11 +388,16 @@ final class EUICCService {
                 at_command: cellDockEUICCATCallback,
                 http_request: cellDockEUICCHTTPCallback
             )
-            guard let session = celldock_euicc_create(callbacks) else {
-                throw EUICCServiceError.unavailable(L10n.tr("无法创建 eUICC 会话。"))
-            }
-            defer { celldock_euicc_destroy(session) }
-            return try work(session, transport)
+            let snapshot: EUICCSnapshot = try {
+                guard let session = celldock_euicc_create(callbacks) else {
+                    throw EUICCServiceError.unavailable(L10n.tr("无法创建 eUICC 会话。"))
+                }
+                defer { celldock_euicc_destroy(session) }
+                return try work(session, transport)
+            }()
+            // Reload only after the session has closed its logical channel.
+            if reloadsSIM { transport.reloadSIM() }
+            return snapshot
         }) { [weak self] result in
             guard let self else { return }
             switch result {

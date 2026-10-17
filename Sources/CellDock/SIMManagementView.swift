@@ -755,7 +755,15 @@ struct SIMManagementView: View {
 
             Spacer()
 
-            if profile.isEnabled {
+            if let switchingLabel = switchingLabel(for: profile) {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(switchingLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            } else if profile.isEnabled {
                 Text("使用中")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.green)
@@ -790,6 +798,14 @@ struct SIMManagementView: View {
             .help(profile.isEnabled ? L10n.tr("管理套餐；使用中的套餐需先停用才能删除") : L10n.tr("管理套餐"))
         }
         .padding(.vertical, 11)
+    }
+
+    private func switchingLabel(for profile: ESIMProfile) -> String? {
+        switch selectedEUICC.operation {
+        case .enabling(profile.iccid): return L10n.tr("正在启用…")
+        case .disabling(profile.iccid): return L10n.tr("正在停用…")
+        default: return nil
+        }
     }
 
     private var overviewConnectionCard: some View {
