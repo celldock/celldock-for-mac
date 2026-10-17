@@ -5,39 +5,6 @@ import OSLog
 
 private let euiccLogger = Logger(subsystem: "app.celldock.mac", category: "EUICC")
 
-private final class EUICCURLSessionDelegate: NSObject, URLSessionTaskDelegate {
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
-    }
-}
-
-private final class EUICCHTTPResponseBox {
-    private let lock = NSLock()
-    private var data: Data?
-    private var status: Int?
-    private var error: Error?
-
-    func store(data: Data?, response: URLResponse?, error: Error?) {
-        lock.lock()
-        self.data = data
-        status = (response as? HTTPURLResponse)?.statusCode
-        self.error = error
-        lock.unlock()
-    }
-
-    func load() -> (data: Data?, status: Int?, error: Error?) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (data, status, error)
-    }
-}
-
 private final class EUICCTransportContext {
     unowned let modemService: ModemService
     private let failureLock = NSLock()
@@ -97,13 +64,7 @@ private final class EUICCTransportContext {
             return -1
         }
 
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 90
-        if let requestBytes, requestLength > 0 {
-            request.httpBody = Data(bytes: requestBytes, count: Int(requestLength))
-        }
-
+        var requestHeaders: [(name: String, value: String)] = []
         if let headers {
             var index = 0
             while let header = headers[index] {
@@ -112,54 +73,24 @@ private final class EUICCTransportContext {
                     let name = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
                     let value = String(line[line.index(after: separator)...])
                         .trimmingCharacters(in: .whitespaces)
-                    if !name.isEmpty { request.setValue(value, forHTTPHeaderField: name) }
+                    if !name.isEmpty { requestHeaders.append((name, value)) }
                 }
                 index += 1
             }
         }
+        var requestBody = Data()
+        if let requestBytes, requestLength > 0 {
+            requestBody = Data(bytes: requestBytes, count: Int(requestLength))
+        }
 
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.waitsForConnectivity = false
-        configuration.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        configuration.urlCache = nil
-        configuration.httpShouldSetCookies = false
-        let sessionDelegate = EUICCURLSessionDelegate()
-        let session = URLSession(
-            configuration: configuration,
-            delegate: sessionDelegate,
-            delegateQueue: nil
-        )
-        let semaphore = DispatchSemaphore(value: 0)
-        let responseBox = EUICCHTTPResponseBox()
-        let task = session.dataTask(with: request) { data, response, error in
-            responseBox.store(data: data, response: response, error: error)
-            semaphore.signal()
-        }
-        task.resume()
-        let waitResult = semaphore.wait(timeout: .now() + 95)
-        if waitResult == .timedOut {
-            task.cancel()
-            session.invalidateAndCancel()
-            recordHTTPFailure(EUICCHTTPFailure(
-                kind: .timedOut,
-                domain: NSURLErrorDomain,
-                code: URLError.Code.timedOut.rawValue
-            ))
-            return -1
-        }
-        session.finishTasksAndInvalidate()
-
-        let response = responseBox.load()
-        if let error = response.error {
-            recordHTTPFailure(EUICCHTTPFailure(error: error))
-            return -1
-        }
-        guard let receivedData = response.data, let receivedStatus = response.status else {
-            recordHTTPFailure(EUICCHTTPFailure(kind: .invalidResponse))
-            return -1
-        }
-        guard receivedData.count <= 8 * 1_024 * 1_024 else {
-            recordHTTPFailure(EUICCHTTPFailure(kind: .responseTooLarge))
+        let receivedData: Data
+        let receivedStatus: Int
+        switch EUICCHTTPSClient.post(url: requestURL, headers: requestHeaders, body: requestBody, timeout: 90) {
+        case let .success(response):
+            receivedData = response.body
+            receivedStatus = response.status
+        case let .failure(failure):
+            recordHTTPFailure(failure)
             return -1
         }
 

@@ -52,6 +52,8 @@ swiftc \
   "$ROOT/Sources/CellDock/NetworkThroughput.swift" \
   "$ROOT/Sources/CellDock/DeletedMessageRegistry.swift" \
   "$ROOT/Sources/CellDock/EUICCModels.swift" \
+  "$ROOT/Sources/CellDock/EUICCServerTrust.swift" \
+  "$ROOT/Sources/CellDock/EUICCHTTPSClient.swift" \
   "$ROOT/Sources/CellDock/ATResponseParser.swift" \
   "$ROOT/Sources/CellDock/SMSPDUDecoder.swift" \
   "$ROOT/Sources/CellDock/SMSPDUEncoder.swift" \

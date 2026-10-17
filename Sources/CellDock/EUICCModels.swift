@@ -154,7 +154,7 @@ enum EUICCHTTPFailureKind: String, Equatable {
     case transport
 }
 
-struct EUICCHTTPFailure: Equatable {
+struct EUICCHTTPFailure: Equatable, Error {
     let kind: EUICCHTTPFailureKind
     let domain: String
     let code: Int
