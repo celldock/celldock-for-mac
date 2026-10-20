@@ -83,10 +83,10 @@ enum CallATParser {
             return [.connected]
         }
         switch uppercase {
-        case "NO CARRIER": return [.ended(.remoteHangup)]
-        case "BUSY": return [.ended(.busy)]
-        case "NO ANSWER": return [.ended(.noAnswer)]
-        case "NO DIALTONE", "NO DIAL TONE": return [.ended(.noDialTone)]
+        case "NO CARRIER": return [.ended(.unknown, evidence: .modemResult(uppercase))]
+        case "BUSY": return [.ended(.busy, evidence: .modemResult(uppercase))]
+        case "NO ANSWER": return [.ended(.noAnswer, evidence: .modemResult(uppercase))]
+        case "NO DIALTONE", "NO DIAL TONE": return [.ended(.noDialTone, evidence: .modemResult(uppercase))]
         default: break
         }
         if uppercase.hasPrefix("+QPCMV:"),

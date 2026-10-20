@@ -7,6 +7,28 @@ export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-$ROOT/.build/caches/c
 export SWIFTPM_MODULECACHE_OVERRIDE="${SWIFTPM_MODULECACHE_OVERRIDE:-$ROOT/.build/caches/swiftpm}"
 mkdir -p "$ROOT/.build/self-tests"
 
+swiftc \
+  -swift-version 5 -parse-as-library \
+  "$ROOT/Sources/CellDock/AppLanguage.swift" \
+  "$ROOT/Sources/CellDock/CellularModuleID.swift" \
+  "$ROOT/Sources/CellDock/CallModels.swift" \
+  "$ROOT/Sources/CellDock/CallATParser.swift" \
+  "$ROOT/Sources/CellDock/Models.swift" \
+  "$ROOT/Sources/CellDock/NetworkThroughput.swift" \
+  "$ROOT/Sources/CellDock/PhoneNumberNormalizer.swift" \
+  "$ROOT/Sources/CellDock/CarrierNameFormatter.swift" \
+  "$ROOT/Sources/CellDockNetworkIPC/CellDockNetworkIPC.swift" \
+  "$ROOT/Sources/CellDock/ATResponseParser.swift" \
+  "$ROOT/Sources/CellDock/SMSVerificationCode.swift" \
+  "$ROOT/Sources/CellDock/SMSPDUDecoder.swift" \
+  "$ROOT/Sources/CellDock/LocalCallAPIProtocol.swift" \
+  "$ROOT/Sources/CellDock/LocalCallAPIServer.swift" \
+  "$ROOT/Sources/CellDock/AppTerminationCoordinator.swift" \
+  "$ROOT/Tests/LocalCallAPISelfTests/LifecycleTests.swift" \
+  "$ROOT/Tests/LocalCallAPISelfTests/main.swift" \
+  -o "$ROOT/.build/self-tests/LocalCallAPISelfTests"
+"$ROOT/.build/self-tests/LocalCallAPISelfTests"
+
 for language in zh-Hans en ja fr; do
   localization_dir="$ROOT/Resources/Localization/$language.lproj"
   plutil -lint "$localization_dir/Localizable.strings" >/dev/null

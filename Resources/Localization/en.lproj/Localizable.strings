@@ -1684,3 +1684,12 @@
 "配置飞书机器人" = "Configure Feishu Bot";
 "钉钉" = "DingTalk";
 "飞书" = "Feishu";
+
+/* Local call API */
+"本地通话 API" = "Local call API";
+"启用本地通话 API" = "Enable local call API";
+"允许持有令牌的本机程序拨号、接听、挂断和查询状态。通话仍使用 Mac 的麦克风与扬声器。" = "Allow local programs with the token to dial, answer, hang up, and query status. Calls still use the Mac microphone and speakers.";
+"复制 API 令牌" = "Copy API token";
+"通话操作正在进行，请稍后重试。" = "A call operation is in progress. Try again shortly.";
+
+"通话已结束，原因未知" = "Call ended; reason unknown";

@@ -19,7 +19,10 @@ enum CallDirection: String, Codable, Equatable {
 
 enum CallEndReason: String, Codable, Equatable {
     case localHangup
+    // Retained for decoding existing call history; generic release indications
+    // do not establish that the remote user pressed Hang Up.
     case remoteHangup
+    case unknown
     case busy
     case noAnswer
     case noDialTone
@@ -30,12 +33,30 @@ enum CallEndReason: String, Codable, Equatable {
         switch self {
         case .localHangup: return L10n.tr("通话已结束")
         case .remoteHangup: return L10n.tr("对方已挂断")
+        case .unknown: return L10n.tr("通话已结束，原因未知")
         case .busy: return L10n.tr("对方忙线")
         case .noAnswer: return L10n.tr("无人接听")
         case .noDialTone: return L10n.tr("网络未提供拨号音")
         case .deviceDisconnected: return L10n.tr("模块已拔出，通话结束")
         case .failed: return L10n.tr("通话失败")
         }
+    }
+}
+
+struct CallEndEvidence: Codable, Equatable {
+    enum Source: String, Codable {
+        case localAction
+        case modemResultCode
+        case callListEmpty
+        case deviceDisconnected
+        case internalFailure
+    }
+
+    let source: Source
+    var code: String? = nil
+
+    static func modemResult(_ code: String) -> Self {
+        Self(source: .modemResultCode, code: code)
     }
 }
 
@@ -58,6 +79,7 @@ struct CallSnapshot: Equatable {
     var muted = false
     var startedAt: Date?
     var lastEndReason: CallEndReason?
+    var lastEndEvidence: CallEndEvidence?
     var lastError: String?
     var controlInterfaceBusy = false
     var mediaCleanupPending = false
@@ -78,6 +100,40 @@ struct CallSnapshot: Equatable {
 
     var canSendDTMF: Bool {
         phase == .active
+    }
+
+    mutating func recordEnd(_ reason: CallEndReason, evidence: CallEndEvidence) {
+        // ATH can produce a delayed NO CARRIER after local cleanup completes.
+        if lastEndEvidence?.source == .localAction, evidence.source != .localAction { return }
+        if reason == .unknown {
+            if let previous = lastEndReason, previous != .unknown, previous != .failed { return }
+            if lastEndEvidence?.source == .modemResultCode, evidence.source == .callListEmpty { return }
+        }
+        lastEndReason = reason
+        lastEndEvidence = evidence
+    }
+
+    // Re-probing the same module after call cleanup must not erase the result
+    // before API clients can observe it. Active call/media state is still reset.
+    mutating func resetForInitialization(
+        phase: CallPhase,
+        voiceOverUSBSupported: Bool,
+        lastError: String? = nil,
+        controlInterfaceBusy: Bool = false
+    ) {
+        self = Self(
+            phase: phase,
+            voiceOverUSBSupported: voiceOverUSBSupported,
+            lastEndReason: lastEndReason,
+            lastEndEvidence: lastEndEvidence,
+            lastError: lastError,
+            controlInterfaceBusy: controlInterfaceBusy
+        )
+    }
+
+    mutating func clearEnd() {
+        lastEndReason = nil
+        lastEndEvidence = nil
     }
 }
 
@@ -104,6 +160,6 @@ enum ModemCallEvent: Equatable {
     case callerID(String)
     case callInfo(ModemCallInfo)
     case connected
-    case ended(CallEndReason)
+    case ended(CallEndReason, evidence: CallEndEvidence)
     case pcmFlowReady(Bool)
 }

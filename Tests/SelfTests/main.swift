@@ -838,7 +838,9 @@ do {
         "QPCMV flow-control formats"
     )
     try expect(
-        callFramer.consume("RING\r\nNO CARRIER\r\n") == [.ring, .ended(.remoteHangup)],
+        callFramer.consume("RING\r\nNO CARRIER\r\n") == [
+            .ring, .ended(.unknown, evidence: .modemResult("NO CARRIER"))
+        ],
         "call terminal URCs"
     )
 

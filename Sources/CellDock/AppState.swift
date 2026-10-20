@@ -18,6 +18,7 @@ private struct NetworkModuleRestartContext {
 
 @MainActor
 final class AppState: ObservableObject {
+    lazy var localCallAPIController = LocalCallAPIController(appState: self)
     lazy var socksProxyController = SOCKSProxyController(appState: self)
     lazy var voWiFiController = VoWiFiController(appState: self)
     @Published private(set) var modem = ModemSnapshot()
@@ -468,10 +469,11 @@ final class AppState: ObservableObject {
         guard !started else { return }
         started = true
         SOCKSSignalSafety.install()
+        localCallAPIController.start()
         socksProxyController.start()
         voWiFiController.start()
         modemInventoryService.onDevices = { [weak self] devices in
-            guard let self else { return }
+            guard let self, !AppTerminationCoordinator.shared.isTerminationPending else { return }
             self.discoveredModemDevices = devices
             self.reconcileDiscoveredModuleRoles()
             self.reconcileSecondaryModemServices()
@@ -482,12 +484,27 @@ final class AppState: ObservableObject {
         StandaloneFlowWindowController.shared.configure(appState: self)
         CommunicationWindowController.shared.configure(appState: self)
         InitialSetupWindowController.shared.configure(appState: self)
-        AppTerminationCoordinator.shared.cleanup = { [weak self] completion in
+        AppTerminationCoordinator.shared.onTerminationCancelled = { [weak self] in
+            guard let self else { return }
+            self.modemService.start()
+            self.secondaryModemServices.values.forEach { $0.start() }
+            self.modemInventoryService.start()
+            self.modemInventoryService.refresh()
+            self.localCallAPIController.start()
+        }
+        AppTerminationCoordinator.shared.onTerminationConfirmed = { [weak self] in
+            self?.alertSounds.stopAll()
+            self?.socksProxyController.stop()
+            self?.voWiFiController.stop()
+        }
+        AppTerminationCoordinator.shared.cleanup = { [weak self] attempt, completion in
             guard let self else {
                 completion(true)
                 return
             }
+            self.localCallAPIController.stop()
             let shutdown = { [weak self] in
+                guard attempt.beginShutdown() else { return }
                 guard let self else {
                     completion(true)
                     return
@@ -495,9 +512,6 @@ final class AppState: ObservableObject {
                 self.networkModuleRestartTask?.cancel()
                 self.networkModuleRestartTask = nil
                 self.pendingNetworkModuleRestart = nil
-                self.alertSounds.stopAll()
-                self.socksProxyController.stop()
-                self.voWiFiController.stop()
                 self.modemInventoryService.stop()
                 self.shutdownAllModemServices(completion: completion)
             }
@@ -828,8 +842,8 @@ final class AppState: ObservableObject {
 
     private func shutdownAllModemServices(completion: @escaping (Bool) -> Void) {
         let services = [modemService] + Array(secondaryModemServices.values)
-        secondaryModemServices.removeAll()
-        secondaryEUICCServices.removeAll()
+        // Retain the services so a cancelled quit can restart every module after
+        // all shutdown callbacks finish, including modules that closed cleanly.
         guard !services.isEmpty else {
             completion(true)
             return
@@ -1970,6 +1984,7 @@ final class AppState: ObservableObject {
         let installReplacement = { [weak self] in
             guard let self else { return }
             self.secondaryModemServiceRebuilds.remove(locationID)
+            guard !AppTerminationCoordinator.shared.isTerminationPending else { return }
             guard let device = self.discoveredModemDevices.first(where: {
                 $0.locationID == locationID
             }) else {
@@ -2183,52 +2198,87 @@ final class AppState: ObservableObject {
     }
 
     func dial(_ number: String) {
+        dial(number, completion: { _ in })
+    }
+
+    func dial(_ number: String, completion: @escaping (ModemActionResult) -> Void) {
         let moduleID = communicationModuleID()
         guard let service = modemService(for: moduleID) else {
-            presentTransientMessage(L10n.tr("当前通信模组尚未就绪。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("当前通信模组尚未就绪。"))
+            show(result)
+            completion(result)
             return
         }
         guard !euiccSnapshot(for: moduleID).isBusy else {
-            presentTransientMessage(L10n.tr("eSIM 操作期间不能拨号。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("eSIM 操作期间不能拨号。"))
+            show(result)
+            completion(result)
             return
         }
         guard !call.hasCall else {
-            presentTransientMessage(L10n.tr("已有一路通话，结束后才能使用另一张卡拨号。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("已有一路通话，结束后才能使用另一张卡拨号。"))
+            show(result)
+            completion(result)
             return
         }
-        guard !isChangingCall else { return }
+        guard !isChangingCall, !AppTerminationCoordinator.shared.isTerminationPending else {
+            completion(.failure(L10n.tr("通话操作正在进行，请稍后重试。")))
+            return
+        }
         isChangingCall = true
         dismissTransientMessage()
         service.dial(number) { [weak self] result in
             guard let self else { return }
             self.isChangingCall = false
             self.show(result)
+            completion(result)
         }
     }
 
     func answerCall() {
+        answerCall(completion: { _ in })
+    }
+
+    func answerCall(completion: @escaping (ModemActionResult) -> Void) {
         let moduleID = activeCallModuleID ?? call.moduleID
         guard let service = modemService(for: moduleID) else {
-            presentTransientMessage(L10n.tr("来电模组已断开。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("来电模组已断开。"))
+            show(result)
+            completion(result)
             return
         }
         guard !euiccSnapshot(for: moduleID).isBusy else {
-            presentTransientMessage(L10n.tr("eSIM 操作期间暂时不能接听。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("eSIM 操作期间暂时不能接听。"))
+            show(result)
+            completion(result)
             return
         }
-        guard !isChangingCall else { return }
+        guard !isChangingCall, !AppTerminationCoordinator.shared.isTerminationPending else {
+            completion(.failure(L10n.tr("通话操作正在进行，请稍后重试。")))
+            return
+        }
         isChangingCall = true
         service.answerCall { [weak self] result in
             guard let self else { return }
             self.isChangingCall = false
             self.show(result)
+            completion(result)
         }
     }
 
     func hangUp() {
-        guard !isChangingCall else { return }
+        hangUp(completion: { _ in })
+    }
+
+    func hangUp(completion: @escaping (ModemActionResult) -> Void) {
+        guard !isChangingCall, !AppTerminationCoordinator.shared.isTerminationPending else {
+            completion(.failure(L10n.tr("通话操作正在进行，请稍后重试。")))
+            return
+        }
         guard let service = modemService(for: activeCallModuleID ?? call.moduleID) else {
-            presentTransientMessage(L10n.tr("通话模组已断开。"), isError: true)
+            let result = ModemActionResult.failure(L10n.tr("通话模组已断开。"))
+            show(result)
+            completion(result)
             return
         }
         isChangingCall = true
@@ -2236,6 +2286,7 @@ final class AppState: ObservableObject {
             guard let self else { return }
             self.isChangingCall = false
             self.show(result)
+            completion(result)
         }
     }
 

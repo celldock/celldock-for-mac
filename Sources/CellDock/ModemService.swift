@@ -1483,7 +1483,7 @@ final class ModemService {
         callSnapshot.direction = .outgoing
         callSnapshot.number = number
         callSnapshot.startedAt = nil
-        callSnapshot.lastEndReason = nil
+        callSnapshot.clearEnd()
         callSnapshot.lastError = nil
         callStateChangedAt = Date()
         callPollMisses = 0
@@ -1535,7 +1535,7 @@ final class ModemService {
         completion: @escaping (ModemActionResult) -> Void
     ) {
         callSnapshot.lastError = nil
-        callSnapshot.lastEndReason = nil
+        callSnapshot.clearEnd()
         publishCallSnapshot()
         if callMediaBackend == .qdcUAC {
             beginQDCAnsweringCall(token: token, completion: completion)
@@ -2175,13 +2175,13 @@ final class ModemService {
         return stopped
     }
 
-    private func scheduleCallCleanup(reason: CallEndReason) {
+    private func scheduleCallCleanup(reason: CallEndReason, evidence: CallEndEvidence) {
+        callSnapshot.recordEnd(reason, evidence: evidence)
         guard !callCleanupScheduled else { return }
         callCleanupScheduled = true
         cancelPendingQDCMediaSession()
         voiceAudio.setMediaEnabled(false)
         callSnapshot.audioActive = false
-        callSnapshot.lastEndReason = reason
         publishCallSnapshot()
         queue.async { [weak self] in
             guard let self else { return }
@@ -2191,7 +2191,10 @@ final class ModemService {
             }
             switch self.queryCallPresence() {
             case .empty:
-                _ = self.finishConfirmedCallEnd(reason: reason)
+                _ = self.finishConfirmedCallEnd(
+                    reason: self.callSnapshot.lastEndReason ?? reason,
+                    evidence: self.callSnapshot.lastEndEvidence ?? evidence
+                )
             case let .present(calls):
                 if let primary = calls.first { self.applyCallInfo(primary) }
                 self.callSnapshot.lastError = L10n.tr("收到通话结束提示，但 CLCC 仍报告语音通话。")
@@ -2210,13 +2213,14 @@ final class ModemService {
     }
 
     @discardableResult
-    private func finishConfirmedCallEnd(reason: CallEndReason) -> Bool {
+    private func finishConfirmedCallEnd(reason: CallEndReason, evidence: CallEndEvidence) -> Bool {
         voiceAudio.setMediaEnabled(false)
         let fullyClean = cleanupCallMedia()
         let cleanupError = callSnapshot.lastError
         invalidateCallAction()
         setCallIdle(
             reason: reason,
+            evidence: evidence,
             error: fullyClean
                 ? nil
                 : (cleanupError ?? L10n.tr("通话已结束，但语音媒体清理未完整确认。"))
@@ -2296,7 +2300,10 @@ final class ModemService {
             }
             switch queryCallPresence() {
             case .empty:
-                return finishConfirmedCallEnd(reason: reason)
+                return finishConfirmedCallEnd(
+                    reason: reason,
+                    evidence: CallEndEvidence(source: reason == .localHangup ? .localAction : .internalFailure)
+                )
             case let .present(calls):
                 if let primary = calls.first { applyCallInfo(primary) }
                 if isOpen {
@@ -2318,7 +2325,11 @@ final class ModemService {
         return false
     }
 
-    private func setCallIdle(reason: CallEndReason? = nil, error: String? = nil) {
+    private func setCallIdle(
+        reason: CallEndReason? = nil,
+        evidence: CallEndEvidence = CallEndEvidence(source: .internalFailure),
+        error: String? = nil
+    ) {
         callSnapshot.phase = callSnapshot.voiceOverUSBSupported ? .idle : .unavailable
         callSnapshot.direction = nil
         callSnapshot.number = nil
@@ -2326,7 +2337,11 @@ final class ModemService {
         callSnapshot.muted = false
         voiceAudio.setMuted(false)
         callSnapshot.startedAt = nil
-        callSnapshot.lastEndReason = reason
+        if let reason {
+            callSnapshot.recordEnd(reason, evidence: evidence)
+        } else {
+            callSnapshot.clearEnd()
+        }
         callSnapshot.lastError = error
         callSnapshot.controlInterfaceBusy = false
         callPollMisses = 0
@@ -2350,7 +2365,8 @@ final class ModemService {
         callPollMisses = 0
         callSnapshot = CallSnapshot(
             phase: .unavailable,
-            lastEndReason: hadCall || disconnected ? .deviceDisconnected : nil
+            lastEndReason: hadCall || disconnected ? .deviceDisconnected : nil,
+            lastEndEvidence: hadCall || disconnected ? CallEndEvidence(source: .deviceDisconnected) : nil
         )
         publishCallSnapshot()
     }
@@ -2360,7 +2376,7 @@ final class ModemService {
         if uppercase.contains("BUSY") { return CallEndReason.busy.localizedDescription }
         if uppercase.contains("NO ANSWER") { return CallEndReason.noAnswer.localizedDescription }
         if uppercase.contains("NO DIAL") { return CallEndReason.noDialTone.localizedDescription }
-        if uppercase.contains("NO CARRIER") { return CallEndReason.remoteHangup.localizedDescription }
+        if uppercase.contains("NO CARRIER") { return CallEndReason.unknown.localizedDescription }
         return L10n.tr("模块未接受通话命令。")
     }
 
@@ -2617,7 +2633,8 @@ final class ModemService {
 
         if !callSnapshot.hasCall, hasPendingMediaCleanup {
             _ = finishConfirmedCallEnd(
-                reason: callSnapshot.lastEndReason ?? .failed
+                reason: callSnapshot.lastEndReason ?? .failed,
+                evidence: callSnapshot.lastEndEvidence ?? CallEndEvidence(source: .internalFailure)
             )
             return
         }
@@ -2725,7 +2742,10 @@ final class ModemService {
             publishCallSnapshot()
         case .empty:
             needsPostCallInitialization = true
-            _ = finishConfirmedCallEnd(reason: .remoteHangup)
+            _ = finishConfirmedCallEnd(
+                reason: callSnapshot.lastEndReason ?? .unknown,
+                evidence: callSnapshot.lastEndEvidence ?? CallEndEvidence(source: .callListEmpty)
+            )
         case let .unknown(error):
             callSnapshot.phase = .recovering
             callSnapshot.lastError = L10n.tr("AT 已恢复，但 CLCC 查询失败：%@", error)
@@ -2882,7 +2902,7 @@ final class ModemService {
             }
         }
         pcmSessionEnabled = false
-        callSnapshot = CallSnapshot(
+        callSnapshot.resetForInitialization(
             phase: mediaAvailable ? .idle : .unavailable,
             voiceOverUSBSupported: mediaAvailable,
             lastError: mediaAvailable
@@ -2962,7 +2982,7 @@ final class ModemService {
             moduleVoiceRuntime = runtime
             callMediaBackend = .qdcUAC
             pcmSessionEnabled = false
-            callSnapshot = CallSnapshot(
+            callSnapshot.resetForInitialization(
                 phase: .idle,
                 voiceOverUSBSupported: true
             )
@@ -3230,7 +3250,7 @@ final class ModemService {
             if callSnapshot.phase == .idle || callSnapshot.phase == .unavailable {
                 callSnapshot.phase = .incoming
                 callSnapshot.direction = .incoming
-                callSnapshot.lastEndReason = nil
+                callSnapshot.clearEnd()
                 callSnapshot.lastError = nil
                 callSnapshot.startedAt = nil
                 callStateChangedAt = Date()
@@ -3241,6 +3261,7 @@ final class ModemService {
             if callSnapshot.phase == .idle || callSnapshot.phase == .unavailable {
                 callSnapshot.phase = .incoming
                 callSnapshot.direction = .incoming
+                callSnapshot.clearEnd()
                 callStateChangedAt = Date()
             }
             callSnapshot.number = number
@@ -3255,19 +3276,20 @@ final class ModemService {
             callStateChangedAt = Date()
             callPollMisses = 0
             publishCallSnapshot()
-        case let .ended(reason):
+        case let .ended(reason, evidence):
             guard callSnapshot.hasCall || pcmSessionEnabled else {
-                callSnapshot.lastEndReason = reason
+                callSnapshot.recordEnd(reason, evidence: evidence)
                 publishCallSnapshot()
                 return
             }
-            scheduleCallCleanup(reason: reason)
+            scheduleCallCleanup(reason: reason, evidence: evidence)
         case let .pcmFlowReady(ready):
             voiceAudio.setPCMFlowReady(ready)
         }
     }
 
     private func applyCallInfo(_ info: ModemCallInfo) {
+        if !callSnapshot.hasCall { callSnapshot.clearEnd() }
         callSnapshot.direction = info.direction
         if let number = info.number, !number.isEmpty {
             callSnapshot.number = number
@@ -3300,7 +3322,9 @@ final class ModemService {
             if Date().timeIntervalSince(callStateChangedAt) >= 3 {
                 callPollMisses += 1
                 if callPollMisses >= 2 {
-                    scheduleCallCleanup(reason: .remoteHangup)
+                    scheduleCallCleanup(
+                        reason: .unknown, evidence: CallEndEvidence(source: .callListEmpty)
+                    )
                 }
             }
             return

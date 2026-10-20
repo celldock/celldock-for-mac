@@ -497,6 +497,11 @@ struct CellDockSettingsView: View {
         VStack(spacing: 16) {
             moduleStatusStrip
 
+            settingsSection(title: L10n.tr("本地通话 API")) {
+                LocalCallAPISettingsView(controller: appState.localCallAPIController)
+                    .padding(16)
+            }
+
             settingsSection(title: L10n.tr("通话录音")) {
                 settingRow(
                     title: L10n.tr("通话时自动录音"),
@@ -934,5 +939,38 @@ struct CellDockSettingsView: View {
         appState.refreshSystemSettingsStatus()
         contacts.reload()
         microphoneAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+}
+
+private struct LocalCallAPISettingsView: View {
+    @ObservedObject var controller: LocalCallAPIController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle(L10n.tr("启用本地通话 API"), isOn: Binding(
+                get: { controller.isEnabled },
+                set: { controller.setEnabled($0) }
+            ))
+            .toggleStyle(.adaptiveGlass)
+            Text(L10n.tr("允许持有令牌的本机程序拨号、接听、挂断和查询状态。通话仍使用 Mac 的麦克风与扬声器。"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if controller.isEnabled {
+                HStack {
+                    Text(verbatim: LocalCallAPIController.endpoint)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button(L10n.tr("复制 API 令牌")) { controller.copyToken() }
+                        .adaptiveGlassButton()
+                        .disabled(!controller.isRunning)
+                }
+                if let error = controller.error {
+                    Text(verbatim: error).font(.caption).foregroundStyle(.red)
+                } else if !controller.isRunning {
+                    ProgressView().controlSize(.small)
+                }
+            }
+        }
     }
 }

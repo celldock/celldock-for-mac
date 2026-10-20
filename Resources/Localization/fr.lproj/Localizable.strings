@@ -1681,3 +1681,12 @@
 "配置飞书机器人" = "Configurer le bot Feishu";
 "钉钉" = "DingTalk";
 "飞书" = "Feishu";
+
+/* Local call API */
+"本地通话 API" = "API d’appel locale";
+"启用本地通话 API" = "Activer l’API d’appel locale";
+"允许持有令牌的本机程序拨号、接听、挂断和查询状态。通话仍使用 Mac 的麦克风与扬声器。" = "Autoriser les programmes locaux disposant du jeton à appeler, répondre, raccrocher et consulter l’état. Les appels utilisent le microphone et les haut-parleurs du Mac.";
+"复制 API 令牌" = "Copier le jeton API";
+"通话操作正在进行，请稍后重试。" = "Une opération d’appel est en cours. Réessayez dans un instant.";
+
+"通话已结束，原因未知" = "Appel terminé ; raison inconnue";
