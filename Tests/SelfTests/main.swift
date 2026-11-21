@@ -4130,6 +4130,148 @@ do {
         "a missing helper reported a requested VoWiFi session as stopped"
     )
 
+    // SOCKS proxy client snippets (Surge / Clash / URL).
+    var lanClientProxy = SOCKSProxyConfiguration.newDraft(moduleIMEI: "861234567890123", port: 1080)
+    lanClientProxy.name = "Office"
+    lanClientProxy.listenScope = .lan
+    lanClientProxy.authentication = .usernamePassword(username: "alice")
+    let lanClient = SOCKSProxyClientConfig(
+        configuration: lanClientProxy,
+        host: SOCKSProxyClientConfig.host(for: .lan, lanAddress: "192.168.1.20"),
+        password: "s3cret"
+    )
+    try expect(
+        lanClient.url == "socks5://alice@192.168.1.20:1080" && !lanClient.url.contains("s3cret"),
+        "SOCKS proxy URL included the password or the wrong host"
+    )
+    try expect(
+        lanClient.surgeLine() == "Office = socks5, 192.168.1.20, 1080, alice, s3cret, udp-relay=true",
+        "Surge line for an authenticated LAN proxy was wrong: \(lanClient.surgeLine())"
+    )
+    try expect(
+        lanClient.surgeLine(revealPassword: false) ==
+            "Office = socks5, 192.168.1.20, 1080, alice, ••••••••, udp-relay=true",
+        "Surge preview did not mask the password"
+    )
+    try expect(
+        lanClient.clashYAML() == """
+        - name: Office
+          type: socks5
+          server: 192.168.1.20
+          port: 1080
+          username: alice
+          password: s3cret
+          udp: true
+        """,
+        "Clash YAML for an authenticated LAN proxy was wrong: \(lanClient.clashYAML())"
+    )
+    try expect(
+        lanClient.clashYAML(revealPassword: false).contains("password: ••••••••") &&
+            !lanClient.clashYAML(revealPassword: false).contains("s3cret"),
+        "Clash preview did not mask the password"
+    )
+    try expect(
+        lanClient.snippet(.address, revealPassword: true) == lanClient.url &&
+            lanClient.snippet(.surge) == lanClient.surgeLine() &&
+            lanClient.snippet(.clash) == lanClient.clashYAML(),
+        "SOCKS proxy snippet dispatch returned the wrong format"
+    )
+
+    var loopbackClientProxy = SOCKSProxyConfiguration.newDraft(moduleIMEI: "861234567890123", port: 1081)
+    loopbackClientProxy.name = "Local"
+    let loopbackClient = SOCKSProxyClientConfig(
+        configuration: loopbackClientProxy,
+        host: SOCKSProxyClientConfig.host(for: .loopback, lanAddress: "192.168.1.20"),
+        password: "ignored"
+    )
+    try expect(
+        loopbackClient.url == "socks5://127.0.0.1:1081" &&
+            loopbackClient.surgeLine() == "Local = socks5, 127.0.0.1, 1081, udp-relay=true" &&
+            loopbackClient.clashYAML() == """
+            - name: Local
+              type: socks5
+              server: 127.0.0.1
+              port: 1081
+              udp: true
+            """,
+        "unauthenticated loopback proxy snippets were wrong"
+    )
+    try expect(
+        SOCKSProxyClientConfig.host(for: .lan, lanAddress: nil) == "0.0.0.0",
+        "LAN proxy without a known address did not fall back to 0.0.0.0"
+    )
+
+    let awkwardClient = SOCKSProxyClientConfig(
+        name: "#HK, 5G = fast\n\"x\"",
+        host: "10.0.0.2",
+        port: 1082,
+        credentials: .init(username: "bob smith", password: "p,a\"ss")
+    )
+    try expect(
+        awkwardClient.surgeLine() ==
+            "＃HK， 5G ＝ fast \"x\" = socks5, 10.0.0.2, 1082, \"bob smith\", \"p,a\"ss\", udp-relay=true",
+        "Surge proxy name or credentials were not neutralised: \(awkwardClient.surgeLine())"
+    )
+    try expect(
+        awkwardClient.clashYAML().hasPrefix("- name: \"#HK, 5G = fast \\\"x\\\"\"\n") &&
+            awkwardClient.clashYAML().contains("  username: \"bob smith\"\n") &&
+            awkwardClient.clashYAML().contains("  password: \"p,a\\\"ss\"\n"),
+        "Clash YAML did not quote special characters: \(awkwardClient.clashYAML())"
+    )
+    try expect(
+        SOCKSProxyClientConfig.yamlScalar("123456") == "\"123456\"" &&
+            SOCKSProxyClientConfig.yamlScalar("true") == "\"true\"" &&
+            SOCKSProxyClientConfig.yamlScalar("1e10") == "\"1e10\"" &&
+            SOCKSProxyClientConfig.yamlScalar("香港-01") == "香港-01" &&
+            SOCKSProxyClientConfig.yamlScalar("a\\b") == "\"a\\\\b\"",
+        "YAML scalars that YAML would misread were not quoted"
+    )
+    try expect(
+        SOCKSProxyClientConfig(name: "  ", host: "127.0.0.1", port: 1080, credentials: nil)
+            .surgeLine().hasPrefix("CellDock = ") &&
+            SOCKSProxyClientConfig(
+                name: "x", host: "127.0.0.1", port: 1080,
+                credentials: .init(username: "a@b:c", password: "p")
+            ).url == "socks5://a%40b%3Ac@127.0.0.1:1080",
+        "blank proxy name fallback or URL username encoding was wrong"
+    )
+
+    try expect(
+        LocalNetworkAddress.isPrivateIPv4("10.1.2.3") &&
+            LocalNetworkAddress.isPrivateIPv4("172.16.0.1") &&
+            LocalNetworkAddress.isPrivateIPv4("172.31.255.255") &&
+            LocalNetworkAddress.isPrivateIPv4("192.168.0.9") &&
+            !LocalNetworkAddress.isPrivateIPv4("172.32.0.1") &&
+            !LocalNetworkAddress.isPrivateIPv4("8.8.8.8") &&
+            !LocalNetworkAddress.isPrivateIPv4("169.254.1.1") &&
+            !LocalNetworkAddress.isPrivateIPv4("192.168.1"),
+        "private IPv4 classification was wrong"
+    )
+    try expect(
+        LocalNetworkAddress.preferredLANAddress(from: [
+            (interface: "en5", address: "192.168.2.4"),
+            (interface: "utun3", address: "10.8.0.2"),
+            (interface: "en0", address: "192.168.1.20"),
+        ]) == "192.168.1.20" &&
+            LocalNetworkAddress.preferredLANAddress(from: [
+                (interface: "en10", address: "10.0.0.10"),
+                (interface: "en2", address: "10.0.0.2"),
+                (interface: "en0", address: "100.64.0.1"),
+            ]) == "10.0.0.2" &&
+            LocalNetworkAddress.preferredLANAddress(from: [
+                (interface: "bridge0", address: "192.168.64.1"),
+            ]) == nil,
+        "LAN address preference was wrong"
+    )
+
+    let generatedProxyPassword = SOCKSProxyPasswordGenerator.generate()
+    try expect(
+        generatedProxyPassword.count == 16 &&
+            generatedProxyPassword.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } &&
+            generatedProxyPassword != SOCKSProxyPasswordGenerator.generate(),
+        "generated proxy password was not 16 random alphanumeric characters"
+    )
+
     print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5, VoWiFi, buffering, storage, merge).")
 } catch {
     fputs("Self-test failed: \(error)\n", stderr)
