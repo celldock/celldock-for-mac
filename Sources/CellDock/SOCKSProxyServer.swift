@@ -7,6 +7,37 @@ private let socksServerLogger = Logger(
     category: "SOCKSProxy"
 )
 
+/// Limits shared by every proxy session.
+enum SOCKSProxyLimits {
+    /// Upper bound for one upstream TCP handshake.
+    static let connectTimeoutSeconds = 10
+    /// A client that has not reached the relay phase by then is dropped, so
+    /// idle or stalled handshakes cannot pile up on a LAN-exposed proxy.
+    static let handshakeTimeoutSeconds = 60
+    /// Sessions accepted per proxy before new connections are refused.
+    static let maximumSessionsPerProxy = 1_024
+    /// A connection that one side has closed is kept only while data still
+    /// moves. A client that finished its request may wait a long time for the
+    /// response, so that direction is patient. Once the upstream has finished
+    /// there is nothing left to deliver, and only a short grace remains for
+    /// the client to close.
+    static func halfClosedIdleTimeoutSeconds(upstreamEnded: Bool) -> Int {
+        upstreamEnded ? 30 : 300
+    }
+
+    /// Name resolution and the TCP handshake are blocking calls. Running them
+    /// on the global queues let a burst of connections to an unreachable
+    /// network occupy the whole dispatch thread pool and stall unrelated work
+    /// in the app, so they get their own pool with a fixed width.
+    static let connectQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "app.celldock.socks.connect"
+        queue.maxConcurrentOperationCount = 32
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+}
+
 final class SOCKSProxyServer {
     let configuration: SOCKSProxyConfiguration
     var onConnectionCountChanged: ((Int) -> Void)?
@@ -134,6 +165,16 @@ final class SOCKSProxyServer {
             connection.cancel()
             return
         }
+        lock.lock()
+        let isFull = sessions.count >= SOCKSProxyLimits.maximumSessionsPerProxy
+        lock.unlock()
+        guard !isFull else {
+            socksServerLogger.error(
+                "Refusing connection: session limit reached proxy=\(self.configuration.name, privacy: .public)"
+            )
+            connection.cancel()
+            return
+        }
         let id = UUID()
         let session = SOCKSProxySession(
             connection: connection,
@@ -188,6 +229,16 @@ private final class SOCKSProxySession {
     private var activeSourceCount = 0
     private var pendingUpstream = Data()
     private var isClientReadPaused = false
+    /// Each direction of a relayed connection ends on its own. The client may
+    /// finish sending while the response is still arriving, and the upstream
+    /// may finish while the client still has data to deliver.
+    private var clientReachedEnd = false
+    private var upstreamWriteClosed = false
+    private var upstreamReachedEnd = false
+    private var clientWriteClosed = false
+    private var lastRelayActivity = DispatchTime.now()
+    private var handshakeTimer: DispatchSourceTimer?
+    private var halfClosedTimer: DispatchSourceTimer?
 
     init(
         connection: NWConnection,
@@ -216,6 +267,20 @@ private final class SOCKSProxySession {
             default: break
             }
         }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(SOCKSProxyLimits.handshakeTimeoutSeconds))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            switch self.phase {
+            case .methods, .authentication, .request:
+                socksServerLogger.info("SOCKS handshake timed out")
+                self.finish()
+            case .relaying, .udpRelaying, .closed:
+                break
+            }
+        }
+        handshakeTimer = timer
+        timer.resume()
         connection.start(queue: queue)
     }
 
@@ -369,8 +434,10 @@ private final class SOCKSProxySession {
 
     private func openUpstream(for request: SOCKSRequest) {
         let binding = self.binding
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        SOCKSProxyLimits.connectQueue.addOperation { [weak self] in
             guard let self else { return }
+            // The session may have been closed while this waited for a slot.
+            guard self.queue.sync(execute: { self.phase != .closed }) else { return }
             do {
                 let addresses: [SOCKSAddress]
                 switch request.address {
@@ -398,13 +465,15 @@ private final class SOCKSProxySession {
                         let socket = try BoundSocket(
                             family: family, kind: .tcp, bsdName: binding.bsdName
                         )
-                        // The timeout bounds the connect attempt only. Leaving it
-                        // on the relay socket tore down every connection that sat
-                        // idle for ten seconds, which broke SSH, WebSocket and
-                        // HTTP keep-alive.
-                        try socket.setTimeout(seconds: 10)
-                        try socket.connect(to: address, port: request.port)
-                        try socket.clearTimeouts()
+                        // The timeout bounds the handshake only; the relay
+                        // socket itself never carries one, because an idle
+                        // connection is normal for SSH, WebSocket and HTTP
+                        // keep-alive.
+                        try socket.connect(
+                            to: address,
+                            port: request.port,
+                            timeoutSeconds: SOCKSProxyLimits.connectTimeoutSeconds
+                        )
                         try socket.setNonBlocking()
                         connected = socket
                         break
@@ -474,8 +543,14 @@ private final class SOCKSProxySession {
             case .wouldBlock:
                 return
             case .endOfStream:
-                finish()
+                // End-of-stream stays readable, so the source would fire in a
+                // loop; park it. The client may still be sending, so only the
+                // direction that actually ended is closed.
+                upstreamReachedEnd = true
+                suspendReadSource()
+                closeClientWriteSide()
             case let .data(data):
+                lastRelayActivity = DispatchTime.now()
                 // Hold off further upstream reads until the client has taken
                 // these bytes, so a slow client cannot make us buffer without
                 // bound.
@@ -500,12 +575,24 @@ private final class SOCKSProxySession {
             [weak self] data, _, complete, error in
             guard let self, self.phase == .relaying else { return }
             if let data, !data.isEmpty {
+                self.lastRelayActivity = DispatchTime.now()
                 self.pendingUpstream.append(data)
-                self.flushToUpstream()
             }
-            if complete || error != nil {
+            if error != nil {
                 self.finish()
-            } else if !self.isClientReadPaused {
+                return
+            }
+            if complete {
+                // The client finished sending. Its last bytes may still be
+                // waiting for the upstream socket, and the response may still
+                // be on its way back, so nothing is torn down here: the flush
+                // closes the upstream's sending side once the backlog is gone.
+                self.clientReachedEnd = true
+                self.flushToUpstream()
+                return
+            }
+            self.flushToUpstream()
+            if self.phase == .relaying, !self.isClientReadPaused {
                 self.readClientForRelay()
             }
         }
@@ -534,7 +621,9 @@ private final class SOCKSProxySession {
         }
         if pendingUpstream.isEmpty {
             suspendWriteSource()
-            if isClientReadPaused {
+            if clientReachedEnd {
+                closeUpstreamWriteSide()
+            } else if isClientReadPaused {
                 isClientReadPaused = false
                 readClientForRelay()
             }
@@ -542,6 +631,59 @@ private final class SOCKSProxySession {
             isClientReadPaused = true
             resumeWriteSource()
         }
+    }
+
+    /// Passes the client's end-of-stream on to the upstream once everything
+    /// the client sent has been written.
+    private func closeUpstreamWriteSide() {
+        guard !upstreamWriteClosed, let upstream else { return }
+        upstreamWriteClosed = true
+        upstream.shutdownWrite()
+        if upstreamReachedEnd, clientWriteClosed {
+            finish()
+        } else {
+            armHalfClosedTimer()
+        }
+    }
+
+    /// Passes the upstream's end-of-stream on to the client. Data handed to
+    /// the connection earlier is sent first.
+    private func closeClientWriteSide() {
+        guard !clientWriteClosed else { return }
+        clientWriteClosed = true
+        connection.send(
+            content: nil,
+            contentContext: .finalMessage,
+            isComplete: true,
+            completion: .contentProcessed { [weak self] error in
+                guard let self, self.phase == .relaying else { return }
+                if error != nil || (self.clientReachedEnd && self.upstreamWriteClosed) {
+                    self.finish()
+                }
+            }
+        )
+        armHalfClosedTimer()
+    }
+
+    /// A half-closed connection is legitimate but must not live forever when
+    /// the remaining side goes silent.
+    private func armHalfClosedTimer() {
+        guard halfClosedTimer == nil, phase == .relaying else { return }
+        lastRelayActivity = DispatchTime.now()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .seconds(10), repeating: .seconds(10))
+        timer.setEventHandler { [weak self] in
+            guard let self, self.phase == .relaying else { return }
+            let idle = DispatchTime.now().uptimeNanoseconds &- self.lastRelayActivity.uptimeNanoseconds
+            let limit = SOCKSProxyLimits.halfClosedIdleTimeoutSeconds(
+                upstreamEnded: self.upstreamReachedEnd
+            )
+            if idle >= UInt64(limit) * 1_000_000_000 {
+                self.finish()
+            }
+        }
+        halfClosedTimer = timer
+        timer.resume()
     }
 
     private func suspendReadSource() {
@@ -597,6 +739,10 @@ private final class SOCKSProxySession {
     private func finish() {
         guard phase != .closed else { return }
         phase = .closed
+        handshakeTimer?.cancel()
+        handshakeTimer = nil
+        halfClosedTimer?.cancel()
+        halfClosedTimer = nil
         pendingUpstream.removeAll()
         udpRelay?.onFailure = nil
         udpRelay?.stop()

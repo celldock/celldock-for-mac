@@ -1090,6 +1090,8 @@
 "模块未返回 OK。" = "Module did not return OK.";
 "模块未连接，无法从 SIM/模块中删除短信。" = "The module is not connected. The message cannot be deleted from the SIM/module.";
 "模块未连接，无法发送短信。" = "The module is not connected. Messages cannot be sent.";
+"模组尚未注册到蜂窝网络，无法发送短信。" = "The module is not registered on a cellular network. Messages cannot be sent.";
+"模组在 %lld 秒内没有返回发送确认；短信状态未知，请勿直接重发。" = "The module did not confirm the message within %lld seconds. Its delivery state is unknown, so do not simply send it again.";
 "模块未连接，无法执行 AT 命令。" = "The module is not connected. AT commands cannot be run.";
 "模块未连接，无法拨号。" = "The module is not connected. Calls cannot be made.";
 "模块未连接，无法接听。" = "The module is not connected. The call cannot be answered.";
@@ -1114,7 +1116,7 @@
 "模组拒绝解锁，未执行配置写入。" = "The module refused to be unlocked and the configuration write was not performed.";
 "模组正在重启" = "Module is restarting";
 "模组详情" = "Module Details";
-"模组重启后 45 秒内未恢复 USB/AT 接口。" = "The USB/AT interface did not return within 45 seconds after the module restarted.";
+"模组重启后 %lld 秒内未恢复 USB/AT 接口。" = "The USB/AT interface did not return within %lld seconds after the module restarted.";
 "正在保存录音…" = "Saving Recording…";
 "正在准备%@的 ECM 链路…" = "Preparing ECM link for %@…";
 "正在准备目标模组的 ECM 链路…" = "Preparing the target module's ECM link…";
@@ -1175,7 +1177,7 @@
 "目标模组服务尚未就绪。" = "The target module service is not ready.";
 "目标模组未能联网，已恢复原上网模组。" = "The target module could not connect. The previous data module was restored.";
 "目标模组的 AT 服务已断开，无法执行自动重启。" = "The target module's AT service disconnected. It cannot be restarted automatically.";
-"目标模组重启后 60 秒内未恢复 AT 接口，请拔下后重新插入。" = "The AT interface did not return within 60 seconds after the target module restarted. Unplug it and reconnect it.";
+"目标模组重启后 %lld 秒内未恢复 AT 接口，请拔下后重新插入。" = "The AT interface did not return within %lld seconds after the target module restarted. Unplug it and reconnect it.";
 "直接点击或使用 Mac 键盘" = "Click or use the Mac keyboard";
 "短信 PDU 不是有效的十六进制数据" = "SMS PDU is not valid hexadecimal data";
 "短信 PDU 在 %@ 处不完整" = "SMS PDU is incomplete at %@";

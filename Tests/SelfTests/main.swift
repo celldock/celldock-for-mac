@@ -23,6 +23,132 @@ func expectDecodeFailure(_ pdu: String, _ message: String) throws {
     }
 }
 
+// MARK: - Loopback helpers for the SOCKS relay test
+
+/// A blocking TCP socket on 127.0.0.1, used to drive the proxy from outside
+/// exactly as a real client and a real destination would.
+final class LoopbackSocket {
+    let descriptor: Int32
+
+    init(descriptor: Int32) { self.descriptor = descriptor }
+
+    deinit { Darwin.close(descriptor) }
+
+    static func listener() throws -> (socket: LoopbackSocket, port: UInt16) {
+        let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        try expect(descriptor >= 0, "loopback listener socket could not be created")
+        var reuse: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        try expect(bound == 0 && Darwin.listen(descriptor, 8) == 0, "loopback listener could not bind")
+        var actual = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &actual) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        try expect(named == 0, "loopback listener port could not be read")
+        return (LoopbackSocket(descriptor: descriptor), UInt16(bigEndian: actual.sin_port))
+    }
+
+    static func connect(port: UInt16) throws -> LoopbackSocket {
+        let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        try expect(descriptor >= 0, "loopback client socket could not be created")
+        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = port.bigEndian
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard connected == 0 else {
+            Darwin.close(descriptor)
+            throw SelfTestFailure.failed("loopback client could not connect to port \(port)")
+        }
+        return LoopbackSocket(descriptor: descriptor)
+    }
+
+    func accept() -> LoopbackSocket? {
+        let accepted = Darwin.accept(descriptor, nil, nil)
+        guard accepted >= 0 else { return nil }
+        var timeout = timeval(tv_sec: 10, tv_usec: 0)
+        setsockopt(accepted, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(accepted, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        return LoopbackSocket(descriptor: accepted)
+    }
+
+    func sendAll(_ bytes: [UInt8]) -> Bool {
+        var sent = 0
+        while sent < bytes.count {
+            let count = bytes.withUnsafeBytes {
+                Darwin.send(descriptor, $0.baseAddress!.advanced(by: sent), bytes.count - sent, 0)
+            }
+            if count > 0 { sent += count; continue }
+            if count < 0, errno == EINTR { continue }
+            return false
+        }
+        return true
+    }
+
+    func receive(exactly count: Int) -> [UInt8]? {
+        var result: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 4_096)
+        while result.count < count {
+            let wanted = min(chunk.count, count - result.count)
+            let received = chunk.withUnsafeMutableBytes { Darwin.recv(descriptor, $0.baseAddress, wanted, 0) }
+            if received > 0 { result.append(contentsOf: chunk.prefix(received)); continue }
+            if received < 0, errno == EINTR { continue }
+            return nil
+        }
+        return result
+    }
+
+    /// Reads until the peer closes its sending side. Returns nil on a timeout
+    /// or an error, so a truncated stream cannot pass as a complete one.
+    func receiveUntilEnd() -> [UInt8]? {
+        var result: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+        while true {
+            let received = chunk.withUnsafeMutableBytes { Darwin.recv(descriptor, $0.baseAddress, $0.count, 0) }
+            if received > 0 { result.append(contentsOf: chunk.prefix(received)); continue }
+            if received == 0 { return result }
+            if errno == EINTR { continue }
+            return nil
+        }
+    }
+
+    func shutdownWrite() { _ = Darwin.shutdown(descriptor, SHUT_WR) }
+}
+
+/// A lock-protected value written by one thread and read by another.
+final class LockedValue<Value> {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) { stored = value }
+
+    var value: Value {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+}
+
 do {
     try expect(
         AppLanguage.preferredSystemLanguage(from: ["zh-Hans-CN"]) == .simplifiedChinese &&
@@ -4272,7 +4398,478 @@ do {
         "generated proxy password was not 16 random alphanumeric characters"
     )
 
-    print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5, VoWiFi, buffering, storage, merge).")
+
+    // MARK: Module link recovery strategies
+
+    // The RM520N-GL has no ADB bridge to repair, but it is no longer left
+    // without any recovery: the Mac-side interface is reset, then the module
+    // is restarted. A module nobody verified still gets nothing.
+    let recoveryQDC = ModemSnapshot(state: .connected, usbIdentity: "2c7c:0125", usbNetMode: 1)
+    let recoveryRM520 = ModemSnapshot(state: .connected, usbIdentity: "2C7C:0801", usbNetMode: 1)
+    let recoveryUnknown = ModemSnapshot(state: .connected, usbIdentity: "2C7C:0802", usbNetMode: 1)
+    try expect(
+        CellularLinkRecoveryPolicy.repairStrategy(for: recoveryQDC) == .moduleBridge &&
+            CellularLinkRecoveryPolicy.repairStrategy(for: recoveryRM520) == .hostInterface &&
+            CellularLinkRecoveryPolicy.repairStrategy(for: recoveryUnknown) == nil &&
+            CellularLinkRecoveryPolicy.repairStrategy(for: ModemSnapshot()) == nil,
+        "link repair strategy did not follow the USB identity"
+    )
+    try expect(
+        CellularLinkRecoveryPolicy.supportsAutomaticRecovery(recoveryQDC) &&
+            CellularLinkRecoveryPolicy.supportsAutomaticRecovery(recoveryRM520) &&
+            !CellularLinkRecoveryPolicy.supportsAutomaticRecovery(recoveryUnknown) &&
+            !CellularLinkRecoveryPolicy.supportsModuleRepair(recoveryRM520),
+        "automatic recovery support was wrong, or the ADB bridge repair leaked to the RM520N-GL"
+    )
+    let deadLinkNetwork = CellularNetworkStatus(
+        serviceID: "service",
+        bsdName: "en19",
+        isEnabled: true,
+        isActive: false,
+        isLinkActive: false,
+        isHardwarePresent: true
+    )
+    try expect(
+        CellularLinkRecoveryPolicy.shouldAttempt(
+            network: deadLinkNetwork,
+            modem: recoveryRM520,
+            desiredMode: .standby,
+            hasCall: false,
+            isChangingNetwork: false,
+            isInFlight: false,
+            completedAttempts: 0
+        ) &&
+            !CellularLinkRecoveryPolicy.shouldAttempt(
+                network: deadLinkNetwork,
+                modem: recoveryUnknown,
+                desiredMode: .standby,
+                hasCall: false,
+                isChangingNetwork: false,
+                isInFlight: false,
+                completedAttempts: 0
+            ),
+        "a dead RM520N-GL link was not scheduled for recovery, or an unverified module was"
+    )
+    try expect(
+        !CellularLinkRecoveryPolicy.shouldAttempt(
+            network: deadLinkNetwork,
+            modem: recoveryRM520,
+            desiredMode: .standby,
+            hasCall: false,
+            isChangingNetwork: false,
+            isInFlight: false,
+            completedAttempts: 0,
+            isSystemAsleep: true
+        ) &&
+            !CellularLinkRecoveryPolicy.shouldAttempt(
+                network: deadLinkNetwork,
+                modem: recoveryRM520,
+                desiredMode: .standby,
+                hasCall: false,
+                isChangingNetwork: false,
+                isInFlight: false,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts
+            ),
+        "link recovery ran while the Mac was asleep or beyond the host-interface budget"
+    )
+    try expect(
+        CellularLinkRecoveryPolicy.shouldRestartModule(
+            network: deadLinkNetwork,
+            modem: recoveryRM520,
+            desiredMode: .standby,
+            hasCall: false,
+            completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+            alreadyRestarted: false
+        ) &&
+            !CellularLinkRecoveryPolicy.shouldRestartModule(
+                network: deadLinkNetwork,
+                modem: recoveryRM520,
+                desiredMode: .standby,
+                hasCall: false,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts - 1,
+                alreadyRestarted: false
+            ) &&
+            !CellularLinkRecoveryPolicy.shouldRestartModule(
+                network: deadLinkNetwork,
+                modem: recoveryRM520,
+                desiredMode: .standby,
+                hasCall: true,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                alreadyRestarted: false
+            ) &&
+            !CellularLinkRecoveryPolicy.shouldRestartModule(
+                network: deadLinkNetwork,
+                modem: recoveryRM520,
+                desiredMode: .standby,
+                hasCall: false,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                alreadyRestarted: true
+            ),
+        "the RM520N-GL restart fallback ignored its budget, an active call, or the once-only guard"
+    )
+    try expect(
+        CellularLinkRecoveryPolicy.shouldEscalateToRestart(
+            reason: .linkInactive,
+            completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+            maximumAttempts: CellularLinkRecoveryPolicy.maximumAttempts(for: recoveryRM520)
+        ) &&
+            !CellularLinkRecoveryPolicy.shouldEscalateToRestart(
+                reason: .linkInactive,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                maximumAttempts: CellularLinkRecoveryPolicy.maximumAttempts(for: recoveryQDC)
+            ),
+        "restart escalation did not use each module's own attempt budget"
+    )
+    // "正在自动重试" must only be shown when something can actually retry.
+    try expect(
+        CellularLinkRecoveryPolicy.isRetrying(
+            modem: recoveryRM520,
+            completedAttempts: 0,
+            hasRestarted: false
+        ) &&
+            CellularLinkRecoveryPolicy.isRetrying(
+                modem: recoveryRM520,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                hasRestarted: false
+            ) &&
+            !CellularLinkRecoveryPolicy.isRetrying(
+                modem: recoveryRM520,
+                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                hasRestarted: true
+            ) &&
+            !CellularLinkRecoveryPolicy.isRetrying(
+                modem: recoveryUnknown,
+                completedAttempts: 0,
+                hasRestarted: false
+            ),
+        "retry reporting claimed a retry for a module without any recovery"
+    )
+    let wakeMoment = Date(timeIntervalSince1970: 1_800_000_000)
+    try expect(
+        !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(lastRestart: nil, now: wakeMoment) &&
+            CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
+                lastRestart: wakeMoment.addingTimeInterval(-60),
+                now: wakeMoment
+            ) &&
+            !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
+                lastRestart: wakeMoment.addingTimeInterval(
+                    -CellularLinkRecoveryPolicy.restartCooldown
+                ),
+                now: wakeMoment
+            ),
+        "a wake re-armed the module restart inside its cooldown, or kept it blocked after it"
+    )
+
+    // Recovery waits for a full wake: 15 is fully awake, 9 and 1 are the
+    // values a dark wake reports (no graphics capability).
+    try expect(
+        SystemPowerState.isFullWake(capabilities: 15) &&
+            SystemPowerState.isFullWake(capabilities: 0x02) &&
+            !SystemPowerState.isFullWake(capabilities: 9) &&
+            !SystemPowerState.isFullWake(capabilities: 1) &&
+            SystemPowerState.isFullWake(capabilities: nil) &&
+            SystemPowerState.isFullyAwake(),
+        "full wake detection was wrong, or this running Mac was reported as not awake"
+    )
+
+    // The helper only resets the Mac-side interface for the RM520N-GL.
+    try expect(
+        CellDockModemNetworkIdentity.resetsHostInterfaceWhenLinkIsDown(
+            vendorID: 0x2C7C,
+            productID: 0x0801
+        ) &&
+            !CellDockModemNetworkIdentity.resetsHostInterfaceWhenLinkIsDown(
+                vendorID: 0x2C7C,
+                productID: 0x0125
+            ) &&
+            CellDockModemNetworkIdentity.linkActivationTimeout(
+                vendorID: 0x2C7C,
+                productID: 0x0125
+            ) == 28 &&
+            CellDockModemNetworkIdentity.linkActivationTimeout(
+                vendorID: 0x2C7C,
+                productID: 0x0801
+            ) < 28,
+        "host interface reset was not limited to the RM520N-GL, or the QDC507 wait changed"
+    )
+    try expect(
+        CellDockModemNetworkIdentity.serviceName(
+            vendorID: 0x2C7C,
+            productID: 0x0801,
+            locationID: 0x0020_0000
+        ) == "RM520N-GL 蜂窝网络 200000" &&
+            CellDockModemNetworkIdentity.serviceName(
+                vendorID: 0x2C7C,
+                productID: 0x0125,
+                locationID: 0x0110_0000
+            ) == "QDC507 蜂窝网络 1100000" &&
+            CellDockModemNetworkIdentity.isKnownInterfaceName(
+                CellDockModemNetworkIdentity.serviceName(
+                    vendorID: 0x2C7C,
+                    productID: 0x0801,
+                    locationID: 0x0020_0000
+                )
+            ),
+        "created network services were mislabelled"
+    )
+
+    // A restarted 5G module needs longer than the QDC507 to come back.
+    try expect(
+        ModuleRestartPolicy.reconnectWindow(usbIdentity: "2C7C:0125") == 45 &&
+            ModuleRestartPolicy.reconnectWindow(usbIdentity: nil) == 45 &&
+            ModuleRestartPolicy.reconnectWindow(usbIdentity: "2c7c:0801") == 90 &&
+            ModuleRestartPolicy.networkRecoveryWindow(usbIdentity: "2C7C:0125") == 60 &&
+            ModuleRestartPolicy.networkRecoveryWindow(usbIdentity: "2C7C:0801") == 105,
+        "module restart windows were wrong"
+    )
+
+    // MARK: SMS submission
+
+    try expect(
+        SMSSubmissionPolicy.confirmationTimeoutMilliseconds >= 120_000,
+        "the SMS confirmation wait is shorter than the module's documented maximum"
+    )
+    try expect(
+        SMSSubmissionPolicy.canSubmit(packet: .registered, voice: .notRegistered) &&
+            SMSSubmissionPolicy.canSubmit(packet: .notRegistered, voice: .roaming) &&
+            SMSSubmissionPolicy.canSubmit(packet: .queryFailed, voice: .notRegistered) &&
+            SMSSubmissionPolicy.canSubmit(packet: .searching, voice: .unknown) &&
+            SMSSubmissionPolicy.canSubmit(packet: .unavailable, voice: .unavailable),
+        "an SMS was blocked although service exists or the registration is unknown"
+    )
+    try expect(
+        !SMSSubmissionPolicy.canSubmit(packet: .notRegistered, voice: .notRegistered) &&
+            !SMSSubmissionPolicy.canSubmit(packet: .searching, voice: .denied) &&
+            !SMSSubmissionPolicy.canSubmit(packet: .denied, voice: .searching),
+        "an SMS was submitted to a module that reported no service in every domain"
+    )
+
+    // MARK: AT console timeouts
+
+    try expect(
+        ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+CSQ") == 15_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "at+cops=?") == 180_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+COPS = 0") == 180_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+COPS?") == 15_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+CGATT=1") == 140_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+CGATT=?") == 15_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+CGACT=1,1") == 150_000 &&
+            ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: "AT+CGACT?") == 15_000,
+        "AT console timeouts did not follow the network-bound commands"
+    )
+
+    // MARK: 5G access technology
+
+    try expect(
+        ATResponseParser.parseOperator("+COPS: 0,0,\"CHINA MOBILE\",13\r\nOK").technology == "NR 5G NSA" &&
+            ATResponseParser.parseOperator("+COPS: 0,0,\"CHINA MOBILE\",12\r\nOK").technology == "NR 5G" &&
+            ATResponseParser.parseOperator("+COPS: 0,0,\"CHINA MOBILE\",11\r\nOK").technology == "NR 5G" &&
+            ATResponseParser.parseOperator("+COPS: 0,0,\"CHINA MOBILE\",10\r\nOK").technology == "LTE" &&
+            ATResponseParser.parseOperator("+COPS: 0,0,\"CHINA MOBILE\",7\r\nOK").technology == "LTE",
+        "5G +COPS access technologies were mislabelled"
+    )
+    // MARK: Module identity across AT reconnects
+
+    var identityCache = ModuleIdentityCache()
+    let cachedDevice = ModuleIdentityCache.Device(locationID: 0x0020_0000, registryID: 0x1_0000_1111)
+    identityCache.record(imei: nil, device: cachedDevice)
+    identityCache.record(imei: "", device: cachedDevice)
+    identityCache.record(imei: "864865061434263", device: nil)
+    try expect(
+        identityCache.locationID(forIMEI: "864865061434263") == nil &&
+            identityCache.imei(forLocationID: 0x0020_0000) == nil,
+        "the identity cache remembered an IMEI without an attached device"
+    )
+    identityCache.record(imei: "864865061434263", device: cachedDevice)
+    try expect(
+        identityCache.locationID(forIMEI: "864865061434263") == 0x0020_0000 &&
+            identityCache.imei(forLocationID: 0x0020_0000) == "864865061434263",
+        "the identity cache did not remember an attached module"
+    )
+    // The AT session dropping does not touch the inventory, so the entry stays.
+    identityCache.retain(devices: [cachedDevice])
+    try expect(
+        identityCache.locationID(forIMEI: "864865061434263") == 0x0020_0000,
+        "the identity cache forgot a module that is still attached"
+    )
+    // A restart or a different module on the same port is a new enumeration.
+    identityCache.retain(devices: [
+        ModuleIdentityCache.Device(locationID: 0x0020_0000, registryID: 0x1_0000_2222),
+    ])
+    try expect(
+        identityCache.locationID(forIMEI: "864865061434263") == nil,
+        "a re-enumerated device inherited the previous module's IMEI"
+    )
+    identityCache.record(imei: "864865061434263", device: cachedDevice)
+    identityCache.retain(devices: [])
+    try expect(
+        identityCache.locationID(forIMEI: "864865061434263") == nil,
+        "the identity cache kept a module after it was unplugged"
+    )
+
+    // MARK: Bounded upstream connect
+
+    let connectListener = try LoopbackSocket.listener()
+    let timedSocket = try BoundSocket(family: .ipv4, kind: .tcp, bsdName: "lo0")
+    try timedSocket.connect(
+        to: .ipv4([127, 0, 0, 1]),
+        port: connectListener.port,
+        timeoutSeconds: 5
+    )
+    // The descriptor comes back in blocking mode, as an untimed connect leaves it.
+    try expect(
+        fcntl(timedSocket.fileDescriptor, F_GETFL, 0) & O_NONBLOCK == 0,
+        "a timed connect left the socket in non-blocking mode"
+    )
+    try expect(connectListener.socket.accept() != nil, "the timed connect never reached the listener")
+    timedSocket.close()
+
+    // A port nobody listens on must fail with the real reason, at once.
+    let closedPort: UInt16 = try {
+        let temporary = try LoopbackSocket.listener()
+        return temporary.port
+    }()
+    let refusedSocket = try BoundSocket(family: .ipv4, kind: .tcp, bsdName: "lo0")
+    let refusedStarted = Date()
+    do {
+        try refusedSocket.connect(to: .ipv4([127, 0, 0, 1]), port: closedPort, timeoutSeconds: 5)
+        throw SelfTestFailure.failed("a timed connect to a closed port succeeded")
+    } catch let BoundSocketError.systemCall(operation, code) {
+        try expect(
+            operation == "connect" && code == ECONNREFUSED &&
+                Date().timeIntervalSince(refusedStarted) < 2,
+            "a refused timed connect reported \(operation) \(code) or waited for the timeout"
+        )
+    }
+    refusedSocket.close()
+
+    // MARK: SOCKS relay keeps a half-closed connection alive
+
+    // The client sends its whole request, closes its sending side, and only
+    // then reads. The proxy used to treat the client's end-of-stream as the
+    // end of the session: unsent request bytes were dropped and the response
+    // never arrived.
+    let upstreamListener = try LoopbackSocket.listener()
+    let upstreamReceivedCount = LockedValue(-1)
+    let upstreamDone = DispatchSemaphore(value: 0)
+    let relayRequestSize = 3 * 1_024 * 1_024
+    Thread.detachNewThread {
+        defer { upstreamDone.signal() }
+        guard let peer = upstreamListener.socket.accept(),
+              let request = peer.receiveUntilEnd() else {
+            return
+        }
+        upstreamReceivedCount.value = request.count
+        // Only answer after the request has ended, as an HTTP/1.0 style
+        // server does; then close.
+        _ = peer.sendAll(Array("RECEIVED \(request.count)".utf8))
+    }
+
+    let relayProxyPort: UInt16 = try {
+        let temporary = try LoopbackSocket.listener()
+        return temporary.port
+    }()
+    let relayServer = SOCKSProxyServer(
+        configuration: SOCKSProxyConfiguration(
+            id: UUID(),
+            name: "self-test",
+            moduleIMEI: "864865061434263",
+            listenScope: .loopback,
+            port: relayProxyPort,
+            isEnabled: true,
+            authentication: .none
+        ),
+        password: nil
+    )
+    relayServer.updateBinding(SOCKSModuleNetworkBindingSnapshot(
+        moduleID: CellularModuleID(rawValue: "usb-location:00200000"),
+        moduleIMEI: "864865061434263",
+        serviceID: "self-test",
+        bsdName: "lo0",
+        ipv4Address: "127.0.0.1",
+        ipv6Address: nil,
+        dnsServers: []
+    ))
+    let relayReady = DispatchSemaphore(value: 0)
+    relayServer.onReady = { _ in relayReady.signal() }
+    let relaySessionCount = LockedValue(0)
+    relayServer.onConnectionCountChanged = { relaySessionCount.value = $0 }
+    try relayServer.start()
+    try expect(
+        relayReady.wait(timeout: .now() + 5) == .success,
+        "the self-test SOCKS listener never became ready"
+    )
+
+    let relayClient = try LoopbackSocket.connect(port: relayProxyPort)
+    try expect(relayClient.sendAll([0x05, 0x01, 0x00]), "SOCKS greeting could not be sent")
+    try expect(relayClient.receive(exactly: 2) == [0x05, 0x00], "SOCKS method selection was not accepted")
+    try expect(
+        relayClient.sendAll([
+            0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+            UInt8(upstreamListener.port >> 8), UInt8(upstreamListener.port & 0xFF),
+        ]),
+        "SOCKS CONNECT could not be sent"
+    )
+    let relayReply = relayClient.receive(exactly: 10)
+    try expect(
+        relayReply?.prefix(2) == [0x05, 0x00],
+        "SOCKS CONNECT through the loopback binding failed: \(String(describing: relayReply))"
+    )
+    try expect(
+        relayClient.sendAll([UInt8](repeating: 0x5A, count: relayRequestSize)),
+        "the relayed request could not be sent"
+    )
+    relayClient.shutdownWrite()
+    let relayResponse = relayClient.receiveUntilEnd()
+    try expect(
+        upstreamDone.wait(timeout: .now() + 15) == .success,
+        "the upstream never saw the end of the half-closed request"
+    )
+    try expect(
+        upstreamReceivedCount.value == relayRequestSize,
+        "the proxy dropped request bytes after the client half-closed: \(upstreamReceivedCount.value) of \(relayRequestSize)"
+    )
+    try expect(
+        relayResponse.map { String(decoding: $0, as: UTF8.self) } == "RECEIVED \(relayRequestSize)",
+        "the response to a half-closed request did not reach the client"
+    )
+    func relaySessionsDrained() -> Bool {
+        let deadline = Date().addingTimeInterval(5)
+        while relaySessionCount.value != 0, Date() < deadline { usleep(20_000) }
+        return relaySessionCount.value == 0
+    }
+    try expect(relaySessionsDrained(), "a session stayed open after both directions had ended")
+
+    // The usual order: the upstream answers and closes first, and the client
+    // closes once it has read everything. The client must see the upstream's
+    // end-of-stream, and the session must not linger afterwards.
+    let closingListener = try LoopbackSocket.listener()
+    Thread.detachNewThread {
+        guard let peer = closingListener.socket.accept() else { return }
+        _ = peer.receive(exactly: 4)
+        _ = peer.sendAll(Array("PONG".utf8))
+    }
+    let closingClient = try LoopbackSocket.connect(port: relayProxyPort)
+    try expect(
+        closingClient.sendAll([0x05, 0x01, 0x00]) &&
+            closingClient.receive(exactly: 2) == [0x05, 0x00] &&
+            closingClient.sendAll([
+                0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+                UInt8(closingListener.port >> 8), UInt8(closingListener.port & 0xFF),
+            ]) &&
+            closingClient.receive(exactly: 10)?.prefix(2) == [0x05, 0x00] &&
+            closingClient.sendAll(Array("PING".utf8)),
+        "the second relayed connection could not be set up"
+    )
+    try expect(
+        closingClient.receiveUntilEnd().map { String(decoding: $0, as: UTF8.self) } == "PONG",
+        "the client did not see the upstream's response followed by its end-of-stream"
+    )
+    closingClient.shutdownWrite()
+    try expect(relaySessionsDrained(), "a session lingered after the upstream and the client closed")
+    relayServer.stop()
+
+    print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5 relay, VoWiFi, link recovery, buffering, storage, merge).")
 } catch {
     fputs("Self-test failed: \(error)\n", stderr)
     exit(1)

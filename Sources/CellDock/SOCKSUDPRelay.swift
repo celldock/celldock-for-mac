@@ -25,10 +25,17 @@ final class SOCKSUDPRelay {
         let port: UInt16
     }
 
+    /// Upstream sockets kept per association. Reaching the limit recycles the
+    /// destination that has been silent the longest; it used to reject every
+    /// new destination for the rest of the association, which broke clients
+    /// that talk to many peers over one association (WebRTC, DNS, QUIC).
+    static let maximumUpstreams = 64
+
     private final class Upstream {
         let destination: Destination
         let socket: BoundSocket
         let readSource: DispatchSourceRead
+        var lastUsed = DispatchTime.now()
 
         init(destination: Destination, socket: BoundSocket, readSource: DispatchSourceRead) {
             self.destination = destination
@@ -252,8 +259,14 @@ final class SOCKSUDPRelay {
     }
 
     private func upstream(for destination: Destination) throws -> Upstream {
-        if let existing = upstreams[destination] { return existing }
-        guard upstreams.count < 16 else { throw SOCKSUDPRelayError.tooManyDestinations }
+        if let existing = upstreams[destination] {
+            existing.lastUsed = DispatchTime.now()
+            return existing
+        }
+        if upstreams.count >= Self.maximumUpstreams,
+           let idlest = upstreams.values.min(by: { $0.lastUsed < $1.lastUsed }) {
+            remove(idlest)
+        }
         let family: BoundSocketFamily = switch destination.address {
         case .ipv4: .ipv4
         case .ipv6: .ipv6
@@ -283,6 +296,7 @@ final class SOCKSUDPRelay {
             while true {
                 switch try upstream.socket.read(maximumBytes: 65_507) {
                 case let .data(payload):
+                    upstream.lastUsed = DispatchTime.now()
                     let wire = try SOCKSProtocol.encodeUDPDatagram(SOCKSUDPDatagram(
                         address: upstream.destination.address,
                         port: upstream.destination.port,

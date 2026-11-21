@@ -108,6 +108,10 @@ final class AppState: ObservableObject {
     private var lastScheduledNetworkConfigurationSignature: String?
     private var didRestartModuleForCellularRecovery: Set<CellularModuleID> = []
     private var lastCellularModuleRestartAt: [CellularModuleID: Date] = [:]
+    /// True between the system's will-sleep and did-wake notifications.
+    private var isSystemAsleep = false
+    private var systemPowerObservers: [NSObjectProtocol] = []
+    private var moduleIdentityCache = ModuleIdentityCache()
     private var pendingNetworkModuleRestart: NetworkModuleRestartContext?
     private var networkModuleRestartTask: Task<Void, Never>?
     private var secondaryModemServiceRebuilds: Set<UInt32> = []
@@ -216,19 +220,52 @@ final class AppState: ObservableObject {
     func socksProxyNetworkBinding(
         forModuleIMEI moduleIMEI: String
     ) -> SOCKSModuleNetworkBindingSnapshot? {
-        guard let module = cellularModules.first(where: { $0.modem.moduleIMEI == moduleIMEI }),
-              let serviceID = module.network.serviceID,
-              let bsdName = module.network.bsdName else {
+        guard let moduleID = attachedModuleID(forIMEI: moduleIMEI) else { return nil }
+        let network = networkStatus(for: moduleID)
+        guard let serviceID = network.serviceID,
+              let bsdName = network.bsdName else {
             return nil
         }
         return SOCKSModuleNetworkBindingSnapshot(
-            moduleID: module.id,
+            moduleID: moduleID,
             moduleIMEI: moduleIMEI,
             serviceID: serviceID,
             bsdName: bsdName,
-            ipv4Address: module.network.ipv4Address,
-            ipv6Address: module.network.ipv6Address,
-            dnsServers: module.network.dnsServers
+            ipv4Address: network.ipv4Address,
+            ipv6Address: network.ipv6Address,
+            dnsServers: network.dnsServers
+        )
+    }
+
+    /// Resolves a persisted IMEI to a module that is physically attached.
+    ///
+    /// The live AT snapshot wins. While that session is reconnecting it has no
+    /// IMEI, so the identity remembered for the same USB enumeration is used
+    /// instead; the data path does not depend on AT and must not be torn down
+    /// with it.
+    func attachedModuleID(forIMEI imei: String) -> CellularModuleID? {
+        if let live = cellularModules.first(where: { $0.modem.moduleIMEI == imei }) {
+            return live.id
+        }
+        guard let locationID = moduleIdentityCache.locationID(forIMEI: imei),
+              discoveredModemDevices.contains(where: { $0.locationID == locationID }) else {
+            return nil
+        }
+        return moduleID(for: locationID)
+    }
+
+    private func rememberModuleIdentity(of snapshot: ModemSnapshot) {
+        guard snapshot.isConnected,
+              let locationID = snapshot.usbLocationID,
+              let device = discoveredModemDevices.first(where: { $0.locationID == locationID }) else {
+            return
+        }
+        moduleIdentityCache.record(
+            imei: snapshot.moduleIMEI,
+            device: ModuleIdentityCache.Device(
+                locationID: device.locationID,
+                registryID: device.registryID
+            )
         )
     }
 
@@ -303,6 +340,7 @@ final class AppState: ObservableObject {
 
     func isRetryingCellularLink(for moduleID: CellularModuleID) -> Bool {
         CellularLinkRecoveryPolicy.isRetrying(
+            modem: moduleSnapshot(for: moduleID),
             completedAttempts: completedCellularLinkRecoveryAttempts[moduleID] ?? 0,
             hasRestarted: didRestartModuleForCellularRecovery.contains(moduleID)
         )
@@ -475,6 +513,10 @@ final class AppState: ObservableObject {
         modemInventoryService.onDevices = { [weak self] devices in
             guard let self else { return }
             self.discoveredModemDevices = devices
+            self.moduleIdentityCache.retain(devices: devices.map {
+                ModuleIdentityCache.Device(locationID: $0.locationID, registryID: $0.registryID)
+            })
+            self.rememberModuleIdentity(of: self.modem)
             self.reconcileDiscoveredModuleRoles()
             self.reconcileSecondaryModemServices()
             self.refreshPendingNetworkModuleRestart()
@@ -564,6 +606,7 @@ final class AppState: ObservableObject {
                 self.activeModemLocationID = locationID
             }
             self.modem = snapshot
+            self.rememberModuleIdentity(of: snapshot)
             self.reconcileDiscoveredModuleRoles()
             self.reconcileSecondaryModemServices()
             self.completePendingNetworkModuleRestartIfReady(
@@ -666,10 +709,69 @@ final class AppState: ObservableObject {
             self.scheduleCellularLinkRecoveryIfNeeded()
         }
 
+        observeSystemSleepAndWake()
         networkController.startMonitoring()
         modemService.start()
 
         scheduleInitialSetupPromptIfNeeded()
+    }
+
+    /// Sleep suspends USB. A module's ECM carrier commonly stays down after
+    /// the Mac wakes, and nothing used to notice: the recovery budget from the
+    /// previous outage was still spent, so the link stayed dead until the
+    /// module was unplugged.
+    private func observeSystemSleepAndWake() {
+        guard systemPowerObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        systemPowerObservers.append(center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.systemWillSleep() }
+        })
+        // A dark wake that is promoted to a full wake is not always announced
+        // as a wake, but the displays coming on is.
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            systemPowerObservers.append(center.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.systemDidWake() }
+            })
+        }
+    }
+
+    private func systemWillSleep() {
+        cellularNetworkLogger.notice("System will sleep; pausing cellular link recovery")
+        isSystemAsleep = true
+        // A repair that is cut off by the sleep would only waste its attempt.
+        cancelCellularLinkRecovery(resetAttempts: false)
+    }
+
+    private func systemDidWake() {
+        cellularNetworkLogger.notice("System did wake; re-checking cellular links")
+        isSystemAsleep = false
+        // Every wake is a new outage: give it the whole soft-recovery budget.
+        // The restart guard is only lifted once its cooldown has passed, so a
+        // Mac that wakes every few minutes cannot power cycle the module each
+        // time.
+        completedCellularLinkRecoveryAttempts.removeAll()
+        let now = Date()
+        for moduleID in didRestartModuleForCellularRecovery
+        where !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
+            lastRestart: lastCellularModuleRestartAt[moduleID],
+            now: now
+        ) {
+            didRestartModuleForCellularRecovery.remove(moduleID)
+            lastCellularModuleRestartAt[moduleID] = nil
+        }
+        modemInventoryService.refresh()
+        modemService.refresh()
+        for service in secondaryModemServices.values { service.refresh() }
+        networkController.refresh()
+        scheduleCellularLinkRecoveryIfNeeded()
     }
 
     func refresh() {
@@ -907,6 +1009,7 @@ final class AppState: ObservableObject {
         service.onSnapshot = { [weak self] snapshot in
             guard let self else { return }
             self.auxiliaryModemSnapshots[device.locationID] = snapshot
+            self.rememberModuleIdentity(of: snapshot)
             self.reconcileCellularNetworkModes()
             self.completePendingNetworkModuleRestartIfReady(
                 moduleID: id,
@@ -1624,6 +1727,8 @@ final class AppState: ObservableObject {
     /// Picks the next module whose link needs repairing. The preferred module
     /// wins when several qualify, because it carries the default route.
     private func cellularLinkRecoveryCandidate() -> CellularModuleID? {
+        // A dark wake is still sleep as far as the user is concerned.
+        let recoveryIsPaused = isSystemAsleep || !SystemPowerState.isFullyAwake()
         let candidates = cellularModules.map(\.id).filter { moduleID in
             CellularLinkRecoveryPolicy.shouldAttempt(
                 network: networkStatus(for: moduleID),
@@ -1632,7 +1737,8 @@ final class AppState: ObservableObject {
                 hasCall: call.hasCall,
                 isChangingNetwork: isChangingNetwork || isSwitchingSIMSlot(on: moduleID),
                 isInFlight: cellularLinkRecoveryInFlight,
-                completedAttempts: completedCellularLinkRecoveryAttempts[moduleID] ?? 0
+                completedAttempts: completedCellularLinkRecoveryAttempts[moduleID] ?? 0,
+                isSystemAsleep: recoveryIsPaused
             )
         }
         return candidates.first { networkMode(for: $0) == .preferred } ?? candidates.first
@@ -1688,49 +1794,80 @@ final class AppState: ObservableObject {
             module=\(moduleID.rawValue, privacy: .public) attempt=\(attempt)
             """
         )
-        service.recoverCellularNetworkLink { [weak self] result in
-            guard let self, self.cellularLinkRecoveryGeneration == generation else { return }
-            switch result {
-            case .success:
-                cellularNetworkLogger.info("Module ECM bridge recovery succeeded")
-                self.applyCurrentCellularNetworkConfiguration { [weak self] dhcpResult in
-                    guard let self,
-                          self.cellularLinkRecoveryGeneration == generation else { return }
-                    self.logNetworkActionResult(
-                        dhcpResult.displayResult,
-                        action: "recovery-dhcp"
+        switch CellularLinkRecoveryPolicy.repairStrategy(for: moduleSnapshot(for: moduleID)) {
+        case .moduleBridge:
+            service.recoverCellularNetworkLink { [weak self] result in
+                guard let self, self.cellularLinkRecoveryGeneration == generation else { return }
+                switch result {
+                case .success:
+                    cellularNetworkLogger.info("Module ECM bridge recovery succeeded")
+                    self.reapplyConfigurationForLinkRecovery(
+                        generation: generation,
+                        moduleID: moduleID,
+                        strategy: .moduleBridge
                     )
-                    switch dhcpResult {
-                    case .success:
-                        self.verifyCellularLinkRecovery(
-                            generation: generation,
-                            moduleID: moduleID
-                        )
-                    case let .failure(message, reason):
-                        self.finishRecoveryOperation()
-                        self.recoveringNetworkLinkModuleID = nil
-                        if self.recoverNetworkFailureImmediatelyIfNeeded(
-                            dhcpResult,
-                            source: "recovery-dhcp",
-                            moduleID: moduleID
-                        ) {
-                            return
-                        }
-                        self.finishCellularLinkRecoveryAttempt(
-                            moduleID: moduleID,
-                            error: reason == .linkInactive
-                                ? L10n.tr("模块内部链路已就绪，但 ECM 载波尚未恢复：%@", message)
-                                : L10n.tr("模块链路已恢复，但 macOS DHCP 刷新失败：%@", message)
-                        )
-                    }
+                case let .failure(message):
+                    cellularNetworkLogger.error(
+                        "Module ECM bridge recovery failed: \(message, privacy: .public)"
+                    )
+                    self.finishRecoveryOperation()
+                    self.recoveringNetworkLinkModuleID = nil
+                    self.finishCellularLinkRecoveryAttempt(moduleID: moduleID, error: message)
                 }
-            case let .failure(message):
-                cellularNetworkLogger.error(
-                    "Module ECM bridge recovery failed: \(message, privacy: .public)"
+            }
+        case .hostInterface:
+            // Nothing inside this module can be repaired. Re-applying the
+            // configuration makes the network helper reset the Mac-side
+            // interface, which is the whole soft step for this strategy.
+            reapplyConfigurationForLinkRecovery(
+                generation: generation,
+                moduleID: moduleID,
+                strategy: .hostInterface
+            )
+        case nil:
+            finishRecoveryOperation()
+            recoveringNetworkLinkModuleID = nil
+        }
+    }
+
+    private func reapplyConfigurationForLinkRecovery(
+        generation: UInt64,
+        moduleID: CellularModuleID,
+        strategy: CellularLinkRepairStrategy
+    ) {
+        applyCurrentCellularNetworkConfiguration { [weak self] dhcpResult in
+            guard let self,
+                  self.cellularLinkRecoveryGeneration == generation else { return }
+            self.logNetworkActionResult(
+                dhcpResult.displayResult,
+                action: "recovery-dhcp"
+            )
+            switch dhcpResult {
+            case .success:
+                self.verifyCellularLinkRecovery(
+                    generation: generation,
+                    moduleID: moduleID
                 )
+            case let .failure(message, reason):
                 self.finishRecoveryOperation()
                 self.recoveringNetworkLinkModuleID = nil
-                self.finishCellularLinkRecoveryAttempt(moduleID: moduleID, error: message)
+                if self.recoverNetworkFailureImmediatelyIfNeeded(
+                    dhcpResult,
+                    source: "recovery-dhcp",
+                    moduleID: moduleID
+                ) {
+                    return
+                }
+                let error: String
+                switch strategy {
+                case .moduleBridge:
+                    error = reason == .linkInactive
+                        ? L10n.tr("模块内部链路已就绪，但 ECM 载波尚未恢复：%@", message)
+                        : L10n.tr("模块链路已恢复，但 macOS DHCP 刷新失败：%@", message)
+                case .hostInterface:
+                    error = message
+                }
+                self.finishCellularLinkRecoveryAttempt(moduleID: moduleID, error: error)
             }
         }
     }
@@ -1781,12 +1918,12 @@ final class AppState: ObservableObject {
             ?? activeCommunicationModuleID
         // Returning false hands the failure back to the soft-recovery ladder,
         // which retries with backoff and only then considers a restart.
-        guard CellularLinkRecoveryPolicy.supportsModuleRepair(
-            moduleSnapshot(for: targetModuleID)
-        ),
+        let targetSnapshot = moduleSnapshot(for: targetModuleID)
+        guard CellularLinkRecoveryPolicy.supportsAutomaticRecovery(targetSnapshot),
               CellularLinkRecoveryPolicy.shouldEscalateToRestart(
             reason: reason,
-            completedAttempts: completedCellularLinkRecoveryAttempts[targetModuleID] ?? 0
+            completedAttempts: completedCellularLinkRecoveryAttempts[targetModuleID] ?? 0,
+            maximumAttempts: CellularLinkRecoveryPolicy.maximumAttempts(for: targetSnapshot)
         ) else {
             return false
         }
@@ -1837,7 +1974,9 @@ final class AppState: ObservableObject {
         error: String? = nil
     ) {
         let attempts = completedCellularLinkRecoveryAttempts[moduleID] ?? 0
-        if attempts >= CellularLinkRecoveryPolicy.maximumAttempts {
+        if attempts >= CellularLinkRecoveryPolicy.maximumAttempts(
+            for: moduleSnapshot(for: moduleID)
+        ) {
             if CellularLinkRecoveryPolicy.shouldRestartModule(
                 network: networkStatus(for: moduleID),
                 modem: moduleSnapshot(for: moduleID),
@@ -1919,8 +2058,12 @@ final class AppState: ObservableObject {
             locationID: locationID
         )
         recoveringNetworkLinkModuleID = moduleID
+        let recoveryWindow = ModuleRestartPolicy.networkRecoveryWindow(
+            usbIdentity: moduleSnapshot(for: moduleID).usbIdentity
+        )
+        let pollCount = max(1, Int(recoveryWindow / 2))
         networkModuleRestartTask = Task { [weak self] in
-            for attempt in 1 ... 30 {
+            for attempt in 1 ... pollCount {
                 do {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
                 } catch {
@@ -1955,7 +2098,10 @@ final class AppState: ObservableObject {
             self.networkModuleRestartTask = nil
             self.recoveringNetworkLinkModuleID = nil
             self.presentTransientMessage(
-                L10n.tr("目标模组重启后 60 秒内未恢复 AT 接口，请拔下后重新插入。"),
+                L10n.tr(
+                    "目标模组重启后 %lld 秒内未恢复 AT 接口，请拔下后重新插入。",
+                    Int64(recoveryWindow)
+                ),
                 isError: true
             )
         }

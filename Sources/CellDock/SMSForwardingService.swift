@@ -150,7 +150,7 @@ final class SMSForwardingService {
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        try await perform(request)
+        try await perform(request, resultCodeKeys: ["code", "StatusCode"])
     }
 
     // MARK: - DingTalk
@@ -189,12 +189,19 @@ final class SMSForwardingService {
         request.httpMethod = "POST"
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        try await perform(request)
+        try await perform(request, resultCodeKeys: ["errcode"])
     }
 
     // MARK: - Transport
 
-    private func perform(_ request: URLRequest) async throws {
+    /// `resultCodeKeys` names the JSON fields a webhook uses for its own
+    /// result. Feishu and DingTalk answer HTTP 200 even when they reject the
+    /// message (wrong signature, missing keyword, rate limit), so the status
+    /// line alone reported those failures as delivered.
+    private func perform(
+        _ request: URLRequest,
+        resultCodeKeys: [String] = []
+    ) async throws {
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
@@ -208,6 +215,14 @@ final class SMSForwardingService {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw SMSForwardingError.transport(
                 L10n.tr("HTTP %d：%@", httpResponse.statusCode, body)
+            )
+        }
+        if let rejection = SMSForwardingSigning.webhookRejection(
+            in: data,
+            resultCodeKeys: resultCodeKeys
+        ) {
+            throw SMSForwardingError.transport(
+                L10n.tr("HTTP %d：%@", httpResponse.statusCode, rejection)
             )
         }
     }

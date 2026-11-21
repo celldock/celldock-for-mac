@@ -510,8 +510,11 @@ enum ATResponseParser {
         case 7: return "LTE"
         case 8: return "EC-GSM-IoT"
         case 9: return "NB-IoT"
-        case 10: return "LTE-M"
-        case 11: return "NR 5G"
+        // 3GPP TS 27.007 +COPS <AcT>. 10 is LTE attached to a 5G core, not
+        // LTE-M; 12 and 13 are what a 5G module reports in SA and NSA.
+        case 10: return "LTE"
+        case 11, 12: return "NR 5G"
+        case 13: return "NR 5G NSA"
         default: return nil
         }
     }

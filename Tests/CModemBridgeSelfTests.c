@@ -24,6 +24,12 @@ int main(void) {
     assert(celldock_modem_is_supported_identity(0x2CA3, 0x0801) == 0);
     assert(celldock_modem_is_supported_identity(0x0000, 0x0000) == 0);
 
+    assert(celldock_modem_result_is_timeout((int)0xE0004051) == 1);
+    assert(celldock_modem_result_is_timeout((int)0xE00002D6) == 1);
+    assert(celldock_modem_result_is_timeout(CELLDOCK_MODEM_OK) == 0);
+    assert(celldock_modem_result_is_timeout(CELLDOCK_MODEM_NOT_OPEN) == 0);
+    assert(celldock_modem_result_is_timeout(CELLDOCK_MODEM_NOT_FOUND) == 0);
+
     size_t discovered_count = celldock_modem_copy_devices(NULL, 0);
     CellDockModemDevice discovered[8] = {0};
     size_t copied_count = celldock_modem_copy_devices(discovered, 8);

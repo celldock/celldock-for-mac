@@ -26,11 +26,21 @@ final class SOCKSProxyController: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
-        store.$configurations.sink { [weak self] _ in self?.reconcile() }
+        // @Published emits from willSet, so a sink that reads the property
+        // back still sees the previous value. Reconciling on the next main
+        // queue turn makes a link or mode change take effect at once instead
+        // of whenever something else happened to publish again.
+        store.$configurations
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reconcile() }
             .store(in: &observations)
-        appState.$networkStatusesByModuleID.sink { [weak self] _ in self?.reconcile() }
+        appState.$networkStatusesByModuleID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reconcile() }
             .store(in: &observations)
-        appState.$cellularNetworkModesByModuleID.sink { [weak self] _ in self?.reconcile() }
+        appState.$cellularNetworkModesByModuleID
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reconcile() }
             .store(in: &observations)
         reconcile()
     }
@@ -77,9 +87,10 @@ final class SOCKSProxyController: ObservableObject {
                 apply(.failedPortInUse(config.port), to: config.id, name: config.name)
                 continue
             }
-            guard let module = appState.cellularModules.first(where: {
-                $0.modem.moduleIMEI == config.moduleIMEI
-            }) else {
+            // Resolved through the app state so that a module whose AT session
+            // is merely reconnecting still counts as attached. The listener
+            // and its live connections only need the ECM interface.
+            guard let moduleID = appState.attachedModuleID(forIMEI: config.moduleIMEI) else {
                 stopServer(config.id)
                 apply(
                     SOCKSProxyRunPolicy.stoppedState(
@@ -94,8 +105,8 @@ final class SOCKSProxyController: ObservableObject {
             }
             if let stopped = SOCKSProxyRunPolicy.stoppedState(
                 isEnabled: config.isEnabled,
-                mode: appState.networkMode(for: module.id),
-                network: module.network
+                mode: appState.networkMode(for: moduleID),
+                network: appState.networkStatus(for: moduleID)
             ) {
                 stopServer(config.id)
                 apply(stopped, to: config.id, name: config.name)

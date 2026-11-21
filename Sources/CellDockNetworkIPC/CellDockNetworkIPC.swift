@@ -8,7 +8,7 @@ public enum CellDockNetworkIPC {
     /// Bump whenever either the helper or its installed VoWiFi runtime changes;
     /// the identity mismatch is what makes the app run the authenticated
     /// installer and replace both root-owned executables atomically.
-    public static let helperBuildVersion = 16
+    public static let helperBuildVersion = 17
     public static let helperIdentity = "CellDock Network Helper/\(helperBuildVersion)"
     public static let helperLabel = "app.celldock.mac.network.helper"
     public static let helperExecutableName = "CellDockNetworkHelper"
@@ -45,6 +45,43 @@ public enum CellDockModemNetworkIdentity {
     public static func isKnownInterfaceName(_ value: String?) -> Bool {
         guard let normalized = value?.lowercased() else { return false }
         return knownInterfaceNameFragments.contains { normalized.contains($0) }
+    }
+
+    /// Whether a dead ECM carrier on this module is worth a Mac-side interface
+    /// reset (down, then up) before waiting for it.
+    ///
+    /// The RM520N-GL exposes nothing that can be repaired from inside, and
+    /// after a system sleep its carrier commonly stays down until the host
+    /// selects the data interface again. The QDC507 is excluded on purpose:
+    /// its link is repaired inside the module, and flapping the host side
+    /// restarts that module's bridge forwarding delay.
+    public static func resetsHostInterfaceWhenLinkIsDown(
+        vendorID: Int,
+        productID: Int
+    ) -> Bool {
+        vendorID == 0x2C7C && productID == 0x0801
+    }
+
+    /// How long to wait for the carrier after the interface was forced up.
+    /// A QDC507 rejoining its internal bridge needs about 26 seconds; a host
+    /// interface reset either works within a few seconds or not at all.
+    public static func linkActivationTimeout(
+        vendorID: Int,
+        productID: Int
+    ) -> TimeInterval {
+        resetsHostInterfaceWhenLinkIsDown(vendorID: vendorID, productID: productID) ? 15 : 28
+    }
+
+    /// Name for a network service the helper has to create. It used to say
+    /// "QDC507" for every module, which mislabelled an RM520N-GL in System
+    /// Settings.
+    public static func serviceName(
+        vendorID: Int,
+        productID: Int,
+        locationID: UInt32
+    ) -> String {
+        let model = vendorID == 0x2C7C && productID == 0x0801 ? "RM520N-GL" : "QDC507"
+        return "\(model) 蜂窝网络 \(String(locationID, radix: 16))"
     }
 }
 

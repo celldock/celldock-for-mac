@@ -125,6 +125,7 @@ final class ModemService {
     private var consecutiveSIMQueryFailures = 0
     private var expectedRestartStartedAt: Date?
     private var expectedRestartObservedDisconnect = false
+    private var expectedRestartWindow = ModuleRestartPolicy.reconnectWindow(usbIdentity: nil)
     private var isRunning = false
     private var currentMessageStorage: String?
     private var readableMessageStorages: [String] = []
@@ -554,8 +555,11 @@ final class ModemService {
         completion: @escaping (ModemActionResult) -> Void
     ) {
         queue.async { [weak self] in
+            // The restart itself is the same AT+CFUN=1,1 on every supported
+            // module; which modules may be restarted automatically is decided
+            // by the recovery policy, not by a second hard-coded identity.
             guard let self, self.isOpen,
-                  self.snapshot.usbIdentity?.uppercased() == "2C7C:0125",
+                  CellularLinkRecoveryPolicy.supportsAutomaticRecovery(self.snapshot),
                   self.snapshot.usbNetMode == 1 else {
                 DispatchQueue.main.async {
                     completion(.failure(L10n.tr("模块尚未就绪，无法执行网络恢复重启。")))
@@ -634,7 +638,11 @@ final class ModemService {
             }
 
             let startedAt = DispatchTime.now().uptimeNanoseconds
-            let response = self.command(command, timeout: 15_000, capacity: 256 * 1_024)
+            let response = self.command(
+                command,
+                timeout: ATConsoleCommandTimeoutPolicy.timeoutMilliseconds(for: command),
+                capacity: 256 * 1_024
+            )
             let finishedAt = DispatchTime.now().uptimeNanoseconds
             let elapsed = finishedAt >= startedAt
                 ? Int((finishedAt - startedAt) / 1_000_000)
@@ -865,6 +873,37 @@ final class ModemService {
                 DispatchQueue.main.async {
                     completion(.failure(
                         L10n.tr("通话期间暂不发送短信，请挂断后重试。"),
+                        isDeliveryUncertain: false
+                    ))
+                }
+                return
+            }
+
+            // A module without service accepts the PDU and then holds it until
+            // its own network timer expires. That blocks this queue, and with
+            // it incoming-call handling, for minutes, and ends in an
+            // "unknown" delivery state. Ask for the live registration instead
+            // of trusting a snapshot that can be ten seconds old.
+            let registration = self.queryRegistrationStates()
+            self.snapshot.registrationState = registration.packet
+            self.snapshot.voiceRegistrationState = registration.voice
+            guard self.isOpen else {
+                DispatchQueue.main.async {
+                    completion(.failure(
+                        L10n.tr("模块未连接，无法发送短信。"),
+                        isDeliveryUncertain: false
+                    ))
+                }
+                return
+            }
+            guard SMSSubmissionPolicy.canSubmit(
+                packet: registration.packet,
+                voice: registration.voice
+            ) else {
+                self.publishSnapshot(self.snapshot)
+                DispatchQueue.main.async {
+                    completion(.failure(
+                        L10n.tr("模组尚未注册到蜂窝网络，无法发送短信。"),
                         isDeliveryUncertain: false
                     ))
                 }
@@ -2609,12 +2648,15 @@ final class ModemService {
 
     private var isExpectingModuleRestart: Bool {
         guard let expectedRestartStartedAt else { return false }
-        return Date().timeIntervalSince(expectedRestartStartedAt) < 45
+        return Date().timeIntervalSince(expectedRestartStartedAt) < expectedRestartWindow
     }
 
     private func beginExpectedModuleRestart(closeModem: Bool = true) {
         expectedRestartStartedAt = Date()
         expectedRestartObservedDisconnect = false
+        expectedRestartWindow = ModuleRestartPolicy.reconnectWindow(
+            usbIdentity: snapshot.usbIdentity
+        )
         if closeModem, let modem {
             celldock_modem_close(modem)
         }
@@ -2734,7 +2776,10 @@ final class ModemService {
                     snapshot = ModemSnapshot(
                         state: .error,
                         simState: .unavailable,
-                        lastError: L10n.tr("模组重启后 45 秒内未恢复 USB/AT 接口。")
+                        lastError: L10n.tr(
+                            "模组重启后 %lld 秒内未恢复 USB/AT 接口。",
+                            Int64(expectedRestartWindow)
+                        )
                     )
                     publishSnapshot(snapshot)
                     return
@@ -2777,7 +2822,10 @@ final class ModemService {
                 snapshot = ModemSnapshot(
                     state: .error,
                     simState: .unavailable,
-                    lastError: L10n.tr("模组重启后 45 秒内未恢复 USB/AT 接口。")
+                    lastError: L10n.tr(
+                            "模组重启后 %lld 秒内未恢复 USB/AT 接口。",
+                            Int64(expectedRestartWindow)
+                        )
                 )
                 publishSnapshot(snapshot)
                 return
@@ -3299,33 +3347,9 @@ final class ModemService {
     private func refreshRadioSnapshot() {
         guard isOpen else { return }
         if snapshot.simState == .ready {
-            let dataRegistration = command("AT+CEREG?", timeout: 3_000)
-            snapshot.registrationState = dataRegistration.isSuccess
-                ? (ATResponseParser.parseRegistrationState(dataRegistration.output) ?? .queryFailed)
-                : .queryFailed
-            if NR5GRegistrationPolicy.shouldQueryC5GREG(
-                firmwareVersion: snapshot.firmwareVersion,
-                epsRegistration: snapshot.registrationState
-            ) {
-                let nrRegistration = command("AT+C5GREG?", timeout: 3_000)
-                snapshot.registrationState = NR5GRegistrationPolicy.effectiveRegistration(
-                    eps: snapshot.registrationState,
-                    nr: nrRegistration.isSuccess
-                        ? ATResponseParser.parseRegistrationState(
-                            nrRegistration.output,
-                            prefix: "+C5GREG"
-                        )
-                        : nil
-                )
-            }
-
-            let voiceRegistration = command("AT+CREG?", timeout: 3_000)
-            snapshot.voiceRegistrationState = voiceRegistration.isSuccess
-                ? (ATResponseParser.parseRegistrationState(
-                    voiceRegistration.output,
-                    prefix: "+CREG"
-                ) ?? .queryFailed)
-                : .queryFailed
+            let registration = queryRegistrationStates()
+            snapshot.registrationState = registration.packet
+            snapshot.voiceRegistrationState = registration.voice
 
             let ims = command("AT+QCFG=\"ims\"", timeout: 3_000)
             if ims.isSuccess {
@@ -3361,6 +3385,42 @@ final class ModemService {
         }
         snapshot.state = .connected
         publishSnapshot(snapshot)
+    }
+
+    /// Packet-domain (EPS, or 5G where the firmware reports it separately) and
+    /// circuit-switched registration, read live from the module.
+    private func queryRegistrationStates() -> (
+        packet: CellularRegistrationState,
+        voice: CellularRegistrationState
+    ) {
+        let dataRegistration = command("AT+CEREG?", timeout: 3_000)
+        var packet: CellularRegistrationState = dataRegistration.isSuccess
+            ? (ATResponseParser.parseRegistrationState(dataRegistration.output) ?? .queryFailed)
+            : .queryFailed
+        if NR5GRegistrationPolicy.shouldQueryC5GREG(
+            firmwareVersion: snapshot.firmwareVersion,
+            epsRegistration: packet
+        ) {
+            let nrRegistration = command("AT+C5GREG?", timeout: 3_000)
+            packet = NR5GRegistrationPolicy.effectiveRegistration(
+                eps: packet,
+                nr: nrRegistration.isSuccess
+                    ? ATResponseParser.parseRegistrationState(
+                        nrRegistration.output,
+                        prefix: "+C5GREG"
+                    )
+                    : nil
+            )
+        }
+
+        let voiceRegistration = command("AT+CREG?", timeout: 3_000)
+        let voice: CellularRegistrationState = voiceRegistration.isSuccess
+            ? (ATResponseParser.parseRegistrationState(
+                voiceRegistration.output,
+                prefix: "+CREG"
+            ) ?? .queryFailed)
+            : .queryFailed
+        return (packet, voice)
     }
 
     private func pollMessages() {
@@ -3744,12 +3804,13 @@ final class ModemService {
         }
 
         var buffer = [CChar](repeating: 0, count: 64 * 1_024)
+        let timeout = SMSSubmissionPolicy.confirmationTimeoutMilliseconds
         let result: Int32 = buffer.withUnsafeMutableBufferPointer { pointer in
             celldock_modem_send_sms_pdu(
                 modem,
                 segment.pdu,
                 segment.tpduLength,
-                90_000,
+                timeout,
                 pointer.baseAddress,
                 pointer.count
             )
@@ -3761,7 +3822,19 @@ final class ModemService {
                 uppercase.hasPrefix("+CME ERROR:") ||
                 uppercase.hasPrefix("+CMS ERROR:")
         }
-        let error = result == CELLDOCK_MODEM_OK ? terminalError : lastBridgeError()
+        let error: String?
+        if result == CELLDOCK_MODEM_OK {
+            error = terminalError
+        } else if celldock_modem_result_is_timeout(result) != 0 {
+            // The bridge reports this in English; it is the one bridge error
+            // an ordinary user is likely to see, so it gets a real message.
+            error = L10n.tr(
+                "模组在 %lld 秒内没有返回发送确认；短信状态未知，请勿直接重发。",
+                Int64(timeout / 1_000)
+            )
+        } else {
+            error = lastBridgeError()
+        }
         return CommandResult(output: output, code: result, error: error)
     }
 
