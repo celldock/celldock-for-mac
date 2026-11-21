@@ -277,6 +277,42 @@ enum ModuleRestartPolicy {
     static func networkRecoveryWindow(usbIdentity: String?) -> TimeInterval {
         reconnectWindow(usbIdentity: usbIdentity) + 15
     }
+
+    /// How long a module may stay on the bus after AT+CFUN=1,1 before it is
+    /// treated as one that ignored the restart. An AT port that still opens
+    /// inside this time belongs to the instance that is shutting down and must
+    /// not be initialized. The QDC507 drops off within 5 seconds; an
+    /// RM520N-GL was measured at 5.6 seconds, which made the 5-second limit
+    /// reconnect to the dying module.
+    static func shutdownGrace(usbIdentity: String?) -> TimeInterval {
+        usbIdentity?.uppercased() == "2C7C:0801" ? 20 : 5
+    }
+}
+
+/// Decisions around a call whose existence could not be confirmed.
+enum CallRecoveryPolicy {
+    /// AT+CLCC is read before a freshly opened module is initialized. When it
+    /// fails while a restart is expected, the failure is the module going
+    /// down or still booting. Treating it as "a call may exist" parked the
+    /// service in call recovery, bound to the instance that was about to
+    /// disappear.
+    static func unreadableCallStateMeansRestart(isExpectingModuleRestart: Bool) -> Bool {
+        isExpectingModuleRestart
+    }
+
+    /// Whether a module that came back as a new USB enumeration may be
+    /// adopted while the service is still in call recovery.
+    ///
+    /// A confirmed call stays bound to its module instance: another module
+    /// must never be mistaken for it. A recovery that only exists because the
+    /// call state could not be read protects nothing once that instance is
+    /// gone, and refusing the new one left the AT session down for good.
+    static func mayAdoptReenumeratedModule(
+        callPresenceWasNeverConfirmed: Bool,
+        hasPendingMediaCleanup: Bool
+    ) -> Bool {
+        callPresenceWasNeverConfirmed && !hasPendingMediaCleanup
+    }
 }
 
 /// Rules for handing an SMS to the module.

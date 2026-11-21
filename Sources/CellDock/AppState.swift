@@ -764,12 +764,17 @@ final class AppState: ObservableObject {
     /// after the cooldown. A link that stays up publishes nothing, so the
     /// guard is also re-evaluated before it is consulted. It is only lifted
     /// for a module the restart actually helped.
-    private func liftRestartGuardIfEarned(for moduleID: CellularModuleID, now: Date = Date()) {
+    private func liftRestartGuardIfEarned(
+        for moduleID: CellularModuleID,
+        afterSystemWake: Bool = false,
+        now: Date = Date()
+    ) {
         guard didRestartModuleForCellularRecovery.contains(moduleID),
               CellularLinkRecoveryPolicy.canLiftRestartGuard(
                   lastRestart: lastCellularModuleRestartAt[moduleID],
                   now: now,
-                  linkRecoveredSinceRestart: linkRecoveredAfterRestart.contains(moduleID)
+                  linkRecoveredSinceRestart: linkRecoveredAfterRestart.contains(moduleID),
+                  afterSystemWake: afterSystemWake
               ) else {
             return
         }
@@ -788,7 +793,7 @@ final class AppState: ObservableObject {
         // time.
         completedCellularLinkRecoveryAttempts.removeAll()
         for moduleID in didRestartModuleForCellularRecovery {
-            liftRestartGuardIfEarned(for: moduleID)
+            liftRestartGuardIfEarned(for: moduleID, afterSystemWake: true)
         }
         modemInventoryService.refresh()
         modemService.refresh()

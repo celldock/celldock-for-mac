@@ -189,12 +189,21 @@ enum CellularLinkRecoveryPolicy {
     /// after its restart was not helped by it: a SIM without a data plan or
     /// without coverage would otherwise be restarted again after every wake,
     /// and each restart takes calls and SMS offline for about a minute.
+    ///
+    /// After a system wake the cooldown does not apply. On an RM520N-GL every
+    /// sleep was observed to kill the ECM link, so a Mac that sleeps twice
+    /// within the cooldown would otherwise be left without a connection until
+    /// the module is unplugged. The cooldown exists to stop a restart loop on
+    /// a module that only blips active; a wake cannot form such a loop,
+    /// because a whole sleep has to pass between two restarts.
     static func canLiftRestartGuard(
         lastRestart: Date?,
         now: Date,
-        linkRecoveredSinceRestart: Bool
+        linkRecoveredSinceRestart: Bool,
+        afterSystemWake: Bool = false
     ) -> Bool {
-        linkRecoveredSinceRestart && canClearRestartGuard(lastRestart: lastRestart, now: now)
+        guard linkRecoveredSinceRestart else { return false }
+        return afterSystemWake || canClearRestartGuard(lastRestart: lastRestart, now: now)
     }
 
     static func delayNanoseconds(completedAttempts: Int) -> UInt64 {

@@ -126,6 +126,10 @@ final class ModemService {
     private var expectedRestartStartedAt: Date?
     private var expectedRestartObservedDisconnect = false
     private var expectedRestartWindow = ModuleRestartPolicy.reconnectWindow(usbIdentity: nil)
+    private var expectedRestartShutdownGrace = ModuleRestartPolicy.shutdownGrace(usbIdentity: nil)
+    /// True while the service is in call recovery only because AT+CLCC could
+    /// not be read, so no call was ever confirmed on the current instance.
+    private var callPresenceWasNeverConfirmed = false
     private var isRunning = false
     private var currentMessageStorage: String?
     private var readableMessageStorages: [String] = []
@@ -2534,6 +2538,7 @@ final class ModemService {
     }
 
     private func setCallIdle(reason: CallEndReason? = nil, error: String? = nil) {
+        callPresenceWasNeverConfirmed = false
         callSnapshot.phase = callSnapshot.voiceOverUSBSupported ? .idle : .unavailable
         callSnapshot.direction = nil
         callSnapshot.number = nil
@@ -2561,6 +2566,7 @@ final class ModemService {
         invalidateCallAction()
         callCleanupScheduled = false
         needsPostCallInitialization = false
+        callPresenceWasNeverConfirmed = false
         callURCFramer.reset()
         callPollMisses = 0
         callSnapshot = CallSnapshot(
@@ -2657,6 +2663,9 @@ final class ModemService {
         expectedRestartWindow = ModuleRestartPolicy.reconnectWindow(
             usbIdentity: snapshot.usbIdentity
         )
+        expectedRestartShutdownGrace = ModuleRestartPolicy.shutdownGrace(
+            usbIdentity: snapshot.usbIdentity
+        )
         if closeModem, let modem {
             celldock_modem_close(modem)
         }
@@ -2714,7 +2723,7 @@ final class ModemService {
                 publishExpectedRestartWaitingState()
                 return
             }
-            let wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
+            var wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
             let result: Int32
             if wasRecoveringCall {
                 guard modemLocationID != 0 else {
@@ -2732,14 +2741,26 @@ final class ModemService {
             if result == CELLDOCK_MODEM_OK {
                 if let expectedRestartStartedAt,
                    !expectedRestartObservedDisconnect,
-                   Date().timeIntervalSince(expectedRestartStartedAt) < 5 {
+                   Date().timeIntervalSince(expectedRestartStartedAt) < expectedRestartShutdownGrace {
                     celldock_modem_close(modem)
                     publishExpectedRestartWaitingState()
                     return
                 }
-                let sameDevice = wasRecoveringCall
+                var sameDevice = wasRecoveringCall
                     ? connectedModemMatchesExpectedIdentity()
                     : recordConnectedModemIdentity()
+                if wasRecoveringCall, !sameDevice,
+                   CallRecoveryPolicy.mayAdoptReenumeratedModule(
+                       callPresenceWasNeverConfirmed: callPresenceWasNeverConfirmed,
+                       hasPendingMediaCleanup: hasPendingMediaCleanup
+                   ) {
+                    // Nothing was ever known about a call on the instance that
+                    // is gone, so there is nothing to protect: start over with
+                    // the module that is attached now.
+                    resetCallConnectionState(disconnected: true)
+                    sameDevice = recordConnectedModemIdentity()
+                    wasRecoveringCall = false
+                }
                 if wasRecoveringCall, !sameDevice {
                     celldock_modem_close(modem)
                     callSnapshot.phase = .recovering
@@ -2884,6 +2905,7 @@ final class ModemService {
             )
             pcmSessionEnabled = false
             needsPostCallInitialization = true
+            callPresenceWasNeverConfirmed = false
             if let primary = calls.first { applyCallInfo(primary) }
             callSnapshot.audioActive = false
             callSnapshot.lastError = L10n.tr("检测到模块中已有通话；为安全起见未自动接管麦克风，请先挂断。")
@@ -2923,7 +2945,17 @@ final class ModemService {
             pcmSessionEnabled = false
             return false
         case let .unknown(error):
+            if CallRecoveryPolicy.unreadableCallStateMeansRestart(
+                isExpectingModuleRestart: isExpectingModuleRestart
+            ) {
+                // The module is restarting. Keep waiting for it instead of
+                // entering call recovery on an instance that is going away.
+                if let modem { celldock_modem_close(modem) }
+                publishExpectedRestartWaitingState()
+                return true
+            }
             needsPostCallInitialization = true
+            callPresenceWasNeverConfirmed = true
             callSnapshot.phase = .recovering
             callSnapshot.lastError = L10n.tr("启动时无法确认是否存在通话：%@", error)
             publishCallSnapshot()
@@ -3561,6 +3593,7 @@ final class ModemService {
     }
 
     private func applyCallInfo(_ info: ModemCallInfo) {
+        callPresenceWasNeverConfirmed = false
         callSnapshot.direction = info.direction
         if let number = info.number, !number.isEmpty {
             callSnapshot.number = number

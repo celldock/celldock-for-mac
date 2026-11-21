@@ -4568,6 +4568,23 @@ do {
             ),
         "the restart guard was lifted inside its cooldown or for a module the restart never helped"
     )
+    // Every sleep kills the RM520N-GL link, so a wake may restart the module
+    // again inside the cooldown, but still only when the last restart helped.
+    try expect(
+        CellularLinkRecoveryPolicy.canLiftRestartGuard(
+            lastRestart: wakeMoment.addingTimeInterval(-60),
+            now: wakeMoment,
+            linkRecoveredSinceRestart: true,
+            afterSystemWake: true
+        ) &&
+            !CellularLinkRecoveryPolicy.canLiftRestartGuard(
+                lastRestart: wakeMoment.addingTimeInterval(-60),
+                now: wakeMoment,
+                linkRecoveredSinceRestart: false,
+                afterSystemWake: true
+            ),
+        "a wake inside the cooldown could not restart a module, or restarted one the restart never helped"
+    )
 
     try expect(
         CellularLinkRecoveryPolicy.hasSettledAfterWake(lastWake: nil, now: wakeMoment) &&
@@ -4638,6 +4655,39 @@ do {
             ModuleRestartPolicy.networkRecoveryWindow(usbIdentity: "2C7C:0125") == 60 &&
             ModuleRestartPolicy.networkRecoveryWindow(usbIdentity: "2C7C:0801") == 105,
         "module restart windows were wrong"
+    )
+
+    // An RM520N-GL stays on the bus for more than 5 seconds after
+    // AT+CFUN=1,1. Reconnecting to it inside that time read a failing CLCC,
+    // entered call recovery on the dying instance and then refused the
+    // rebooted module for good.
+    try expect(
+        ModuleRestartPolicy.shutdownGrace(usbIdentity: "2C7C:0125") == 5 &&
+            ModuleRestartPolicy.shutdownGrace(usbIdentity: nil) == 5 &&
+            ModuleRestartPolicy.shutdownGrace(usbIdentity: "2c7c:0801") >= 15 &&
+            ModuleRestartPolicy.shutdownGrace(usbIdentity: "2C7C:0801") <
+            ModuleRestartPolicy.reconnectWindow(usbIdentity: "2C7C:0801"),
+        "the post-restart shutdown grace is wrong for the QDC507 or too short for the RM520N-GL"
+    )
+    try expect(
+        CallRecoveryPolicy.unreadableCallStateMeansRestart(isExpectingModuleRestart: true) &&
+            !CallRecoveryPolicy.unreadableCallStateMeansRestart(isExpectingModuleRestart: false),
+        "an unreadable call state during an expected restart was treated as a possible call"
+    )
+    try expect(
+        CallRecoveryPolicy.mayAdoptReenumeratedModule(
+            callPresenceWasNeverConfirmed: true,
+            hasPendingMediaCleanup: false
+        ) &&
+            !CallRecoveryPolicy.mayAdoptReenumeratedModule(
+                callPresenceWasNeverConfirmed: false,
+                hasPendingMediaCleanup: false
+            ) &&
+            !CallRecoveryPolicy.mayAdoptReenumeratedModule(
+                callPresenceWasNeverConfirmed: true,
+                hasPendingMediaCleanup: true
+            ),
+        "a re-enumerated module was adopted over a confirmed call, or refused without one"
     )
 
     // MARK: SMS submission
