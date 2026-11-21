@@ -8,12 +8,44 @@ public enum CellDockNetworkIPC {
     /// Bump whenever either the helper or its installed VoWiFi runtime changes;
     /// the identity mismatch is what makes the app run the authenticated
     /// installer and replace both root-owned executables atomically.
-    public static let helperBuildVersion = 15
+    public static let helperBuildVersion = 16
     public static let helperIdentity = "CellDock Network Helper/\(helperBuildVersion)"
     public static let helperLabel = "app.celldock.mac.network.helper"
     public static let helperExecutableName = "CellDockNetworkHelper"
     public static let voWiFiRuntimeExecutableName = "CellDockVoWiFiRuntime"
     public static let launchDaemonPlistName = "app.celldock.mac.network.helper.plist"
+}
+
+/// USB identities whose CDC-ECM interface CellDock may manage, shared by the
+/// app and the privileged helper so both sides accept the same hardware.
+public enum CellDockModemNetworkIdentity {
+    public struct USBIdentity: Equatable, Sendable {
+        public let vendorID: Int
+        public let productID: Int
+    }
+
+    public static let supportedUSBIdentities: [USBIdentity] = [
+        // Quectel QDC507.
+        USBIdentity(vendorID: 0x2C7C, productID: 0x0125),
+        // Quectel RM520N-GL in ECM mode (usbnet 1).
+        USBIdentity(vendorID: 0x2C7C, productID: 0x0801)
+    ]
+
+    /// Fragments of the vendor or product name that SCPreferences keeps for a
+    /// modem interface. This is the only identifier that survives once the
+    /// hardware is detached.
+    public static let knownInterfaceNameFragments = [
+        "baiwang", "qdc507", "quectel", "ec25", "eg25", "rm520"
+    ]
+
+    public static func isSupported(vendorID: Int, productID: Int) -> Bool {
+        supportedUSBIdentities.contains(USBIdentity(vendorID: vendorID, productID: productID))
+    }
+
+    public static func isKnownInterfaceName(_ value: String?) -> Bool {
+        guard let normalized = value?.lowercased() else { return false }
+        return knownInterfaceNameFragments.contains { normalized.contains($0) }
+    }
 }
 
 public struct CellularNetworkConfigurationRequest: Codable, Equatable, Sendable {

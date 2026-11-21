@@ -1632,6 +1632,193 @@ do {
         "SIM slot switching was supported without firmware or a reported slot"
     )
     try expect(ModemSnapshot().simSlotSwitchingSupported == false, "snapshot defaulted to slot switching")
+
+    // Quectel RM520N-GL (2C7C:0801). Response shapes below are verbatim from
+    // a read-only probe of firmware RM520NGLAAR03A04M4G_01.204.01.204.
+    let probedRM520Firmware = ATResponseParser.normalizedLines(
+        "\r\nRM520NGLAAR03A04M4G_01.204.01.204\r\n\r\nOK\r\n"
+    ).filter { $0.uppercased() != "OK" }.joined(separator: " ")
+    try expect(
+        SIMSlotSwitchingPolicy.isSupported(
+            firmwareVersion: probedRM520Firmware,
+            reportedSlot: ATResponseParser.parseSIMSlot("\r\n+QUIMSLOT: 1\r\n\r\nOK\r\n")
+        ),
+        "probed RM520N-GL firmware and QUIMSLOT answer did not enable slot switching"
+    )
+    let rm520USBConfiguration = ATResponseParser.parseUSBConfiguration(
+        "\r\n+QCFG: \"usbcfg\",0x2C7C,0x0801,1,1,1,1,1,0,0\r\n\r\nOK\r\n"
+    )
+    try expect(
+        rm520USBConfiguration?.vendorID == 0x2C7C && rm520USBConfiguration?.productID == 0x0801,
+        "probed RM520N-GL USBCFG was not parsed"
+    )
+    try expect(
+        rm520USBConfiguration?.isSafeIdentityConversionSource == false &&
+            rm520USBConfiguration?.isCellDockTarget == false,
+        "RM520N-GL USBCFG was accepted as a CellDock conversion source or target"
+    )
+    try expect(
+        ModemSnapshot(
+            state: .connected,
+            usbIdentity: "2C7C:0801",
+            hardwareFamily: .quectelNativeVoice,
+            usbNetMode: 1,
+            usbConfiguration: rm520USBConfiguration
+        ).initialSetupState == .ready,
+        "RM520N-GL in ECM mode was not ready"
+    )
+    try expect(
+        ModemSnapshot(
+            state: .connected,
+            usbIdentity: "2c7c:0801",
+            usbNetMode: 1
+        ).initialSetupState == .ready,
+        "RM520N-GL readiness depended on reading USBCFG"
+    )
+    try expect(
+        ModemSnapshot(
+            state: .connected,
+            usbIdentity: "2C7C:0801",
+            usbConfiguration: rm520USBConfiguration
+        ).initialSetupState == .inspecting,
+        "RM520N-GL with an unknown usbnet mode was not still inspecting"
+    )
+    for mode in [0, 2, 3, 5] {
+        try expect(
+            ModemSnapshot(
+                state: .connected,
+                usbIdentity: "2C7C:0801",
+                usbNetMode: mode,
+                usbConfiguration: rm520USBConfiguration
+            ).initialSetupState == .unsupportedUSBNetMode(mode),
+            "RM520N-GL usbnet=\(mode) offered a configuration write"
+        )
+    }
+    try expect(
+        ModemSnapshot(
+            state: .connected,
+            usbIdentity: "2C7C:0802",
+            usbNetMode: 1
+        ).initialSetupState == .unsupportedIdentity("2C7C:0802"),
+        "an unverified Quectel product ID was accepted"
+    )
+    try expect(
+        CellDockModemNetworkIdentity.isSupported(vendorID: 0x2C7C, productID: 0x0125) &&
+            CellDockModemNetworkIdentity.isSupported(vendorID: 0x2C7C, productID: 0x0801) &&
+            !CellDockModemNetworkIdentity.isSupported(vendorID: 0x2C7C, productID: 0x0800) &&
+            !CellDockModemNetworkIdentity.isSupported(vendorID: 0x2CA3, productID: 0x0801),
+        "network helper identity list is wrong"
+    )
+    try expect(
+        CellDockModemNetworkIdentity.isKnownInterfaceName("RM520N-GL") &&
+            CellDockModemNetworkIdentity.isKnownInterfaceName("QDC507 蜂窝网络 200000") &&
+            !CellDockModemNetworkIdentity.isKnownInterfaceName("Thunderbolt Bridge") &&
+            !CellDockModemNetworkIdentity.isKnownInterfaceName(nil),
+        "known modem interface names are wrong"
+    )
+
+    // Automatic link repair and restart stay on the QDC507 only.
+    let rm520RecoverableModem = ModemSnapshot(
+        state: .connected,
+        usbIdentity: "2C7C:0801",
+        usbNetMode: 1
+    )
+    try expect(
+        CellularLinkRecoveryPolicy.supportsModuleRepair(
+            ModemSnapshot(state: .connected, usbIdentity: "2c7c:0125", usbNetMode: 1)
+        ) &&
+            !CellularLinkRecoveryPolicy.supportsModuleRepair(rm520RecoverableModem) &&
+            !CellularLinkRecoveryPolicy.supportsModuleRepair(ModemSnapshot()),
+        "module repair support is not limited to the QDC507"
+    )
+
+    // 5G registration: only RM520N firmware without EPS service asks C5GREG.
+    try expect(
+        NR5GRegistrationPolicy.shouldQueryC5GREG(
+            firmwareVersion: probedRM520Firmware,
+            epsRegistration: .notRegistered
+        ) &&
+            NR5GRegistrationPolicy.shouldQueryC5GREG(
+                firmwareVersion: probedRM520Firmware,
+                epsRegistration: .queryFailed
+            ),
+        "RM520N without LTE service did not ask for 5G registration"
+    )
+    try expect(
+        !NR5GRegistrationPolicy.shouldQueryC5GREG(
+            firmwareVersion: probedRM520Firmware,
+            epsRegistration: .registered
+        ) &&
+            !NR5GRegistrationPolicy.shouldQueryC5GREG(
+                firmwareVersion: probedRM520Firmware,
+                epsRegistration: .roaming
+            ),
+        "RM520N with LTE service still asked for 5G registration"
+    )
+    try expect(
+        !NR5GRegistrationPolicy.shouldQueryC5GREG(
+            firmwareVersion: "EG25GGBR07A08M2G",
+            epsRegistration: .notRegistered
+        ) &&
+            !NR5GRegistrationPolicy.shouldQueryC5GREG(
+                firmwareVersion: nil,
+                epsRegistration: .notRegistered
+            ),
+        "non-RM520N firmware was sent AT+C5GREG?"
+    )
+    let probedC5GREG = ATResponseParser.parseRegistrationState(
+        "\r\n+C5GREG: 0,0\r\n\r\nOK\r\n",
+        prefix: "+C5GREG"
+    )
+    try expect(probedC5GREG == .notRegistered, "probed C5GREG answer was not parsed")
+    try expect(
+        ATResponseParser.parseRegistrationState("+C5GREG: 2,1,\"5A\",\"1B2C3D\",11\r\nOK", prefix: "+C5GREG") ==
+            .registered &&
+            ATResponseParser.parseRegistrationState("+C5GREG: 0,5\r\nOK", prefix: "+C5GREG") == .roaming,
+        "C5GREG registered/roaming states were not parsed"
+    )
+    try expect(
+        ATResponseParser.parseRegistrationState("\r\n+CEREG: 0,1\r\n\r\nOK\r\n", prefix: "+C5GREG") == nil,
+        "a CEREG line was read as C5GREG"
+    )
+    try expect(
+        NR5GRegistrationPolicy.effectiveRegistration(eps: .notRegistered, nr: .registered) == .registered &&
+            NR5GRegistrationPolicy.effectiveRegistration(eps: .queryFailed, nr: nil) == .queryFailed,
+        "5G registration did not replace the EPS state only when it parsed"
+    )
+
+    // QCSQ: probed LTE answer keeps the existing behaviour; NR5G is labelled
+    // as RSRP/SINR/RSRQ instead of RSSI.
+    let probedLTEQCSQ = ATResponseParser.parseQCSQ("\r\n+QCSQ: \"LTE\",-64,-92,9,-7\r\n\r\nOK\r\n")
+    try expect(
+        probedLTEQCSQ?.dbm == -92 &&
+            probedLTEQCSQ?.technology == "LTE" &&
+            probedLTEQCSQ?.detail == "RSSI -64 · RSRP -92 · RSRQ -7",
+        "probed RM520N LTE QCSQ changed"
+    )
+    let nrQCSQ = ATResponseParser.parseQCSQ("\r\n+QCSQ: \"NR5G\",-85,15,-11\r\n\r\nOK\r\n")
+    try expect(
+        nrQCSQ?.dbm == -85 &&
+            nrQCSQ?.technology == "NR5G" &&
+            nrQCSQ?.detail == "RSRP -85 · SINR 15 · RSRQ -11",
+        "NR5G QCSQ was not parsed as RSRP/SINR/RSRQ"
+    )
+    try expect(
+        nrQCSQ?.detail.contains("RSSI") == false,
+        "NR5G RSRP was labelled as RSSI"
+    )
+    try expect(
+        ATResponseParser.parseQCSQ("+QCSQ: \"NR5G\",-32768,-32768,-32768\r\nOK") == nil &&
+            ATResponseParser.parseQCSQ("+QCSQ: \"NR5G\",-85\r\nOK") == nil,
+        "invalid or truncated NR5G QCSQ was accepted"
+    )
+    try expect(
+        ATResponseParser.parseQCSQ(
+            "+QCSQ: \"LTE\",-64,-92,9,-7\r\n+QCSQ: \"NR5G\",-85,15,-11\r\nOK"
+        )?.technology == "LTE",
+        "NSA QCSQ no longer reports the LTE anchor first"
+    )
+    try expect(ATResponseParser.parseQCSQ("+QCSQ: \"NOSERVICE\"\r\nOK") == nil, "NOSERVICE QCSQ parsed")
     try expect(
         ATResponseParser.parseIMSMode("+QCFG: \"ims\",0,1\r\nOK") == 0,
         "IMS mode zero parsing"

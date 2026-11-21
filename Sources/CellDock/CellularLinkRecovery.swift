@@ -6,6 +6,19 @@ import CellDockNetworkIPC
 enum CellularLinkRecoveryPolicy {
     static let maximumAttempts = 3
 
+    /// USB identities that `ModemService.recoverCellularNetworkLink` and
+    /// `restartForCellularNetworkRecovery` accept. Both act on the module
+    /// itself (bridge repair over ADB, AT+CFUN=1,1), and are only verified on
+    /// the QDC507. Other modules, such as the RM520N-GL, are never repaired or
+    /// restarted automatically, so the loop must not keep scheduling attempts
+    /// that the service would refuse.
+    static let moduleRepairIdentities: Set<String> = ["2C7C:0125"]
+
+    static func supportsModuleRepair(_ modem: ModemSnapshot) -> Bool {
+        guard let identity = modem.usbIdentity?.uppercased() else { return false }
+        return moduleRepairIdentities.contains(identity)
+    }
+
     /// Recovery is evaluated per module. A module the user asked to keep
     /// connected deserves the same repair path as the preferred one; only a
     /// module that is meant to be off is left alone.
@@ -18,7 +31,8 @@ enum CellularLinkRecoveryPolicy {
         isInFlight: Bool,
         completedAttempts: Int
     ) -> Bool {
-        desiredMode.isEnabled &&
+        supportsModuleRepair(modem) &&
+            desiredMode.isEnabled &&
             network.isEnabled &&
             network.isHardwarePresent &&
             !network.isActive &&
@@ -38,7 +52,8 @@ enum CellularLinkRecoveryPolicy {
         completedAttempts: Int,
         alreadyRestarted: Bool
     ) -> Bool {
-        completedAttempts >= maximumAttempts &&
+        supportsModuleRepair(modem) &&
+            completedAttempts >= maximumAttempts &&
             !alreadyRestarted &&
             desiredMode.isEnabled &&
             network.isEnabled &&

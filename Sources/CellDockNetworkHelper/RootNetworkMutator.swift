@@ -647,10 +647,7 @@ final class RootNetworkMutator {
     /// Matches the vendor name that SCPreferences keeps for a modem interface.
     /// This is the only identifier that survives once the hardware is detached.
     private func isKnownModemInterfaceName(_ value: String?) -> Bool {
-        guard let normalized = value?.lowercased() else { return false }
-        return ["baiwang", "qdc507", "quectel", "ec25", "eg25"].contains {
-            normalized.contains($0)
-        }
+        CellDockModemNetworkIdentity.isKnownInterfaceName(value)
     }
 
     private func matchesTargetModem(
@@ -658,8 +655,10 @@ final class RootNetworkMutator {
         locationID: UInt32
     ) -> Bool {
         guard let identity,
-              identity.vendorID == 0x2C7C,
-              identity.productID == 0x0125 else {
+              CellDockModemNetworkIdentity.isSupported(
+                  vendorID: identity.vendorID,
+                  productID: identity.productID
+              ) else {
             return false
         }
         return locationID == 0 || identity.locationID == locationID

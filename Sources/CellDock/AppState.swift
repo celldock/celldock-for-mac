@@ -1391,6 +1391,9 @@ final class AppState: ObservableObject {
         }
 
         if let moduleIDToPrepare,
+           CellularLinkRecoveryPolicy.supportsModuleRepair(
+               moduleSnapshot(for: moduleIDToPrepare)
+           ),
            CellularLinkRecoveryPolicy.needsLinkPreparation(
                networkStatus(for: moduleIDToPrepare)
            ),
@@ -1751,7 +1754,10 @@ final class AppState: ObservableObject {
             ?? activeCommunicationModuleID
         // Returning false hands the failure back to the soft-recovery ladder,
         // which retries with backoff and only then considers a restart.
-        guard CellularLinkRecoveryPolicy.shouldEscalateToRestart(
+        guard CellularLinkRecoveryPolicy.supportsModuleRepair(
+            moduleSnapshot(for: targetModuleID)
+        ),
+              CellularLinkRecoveryPolicy.shouldEscalateToRestart(
             reason: reason,
             completedAttempts: completedCellularLinkRecoveryAttempts[targetModuleID] ?? 0
         ) else {

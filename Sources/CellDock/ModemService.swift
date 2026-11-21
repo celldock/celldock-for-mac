@@ -3303,6 +3303,21 @@ final class ModemService {
             snapshot.registrationState = dataRegistration.isSuccess
                 ? (ATResponseParser.parseRegistrationState(dataRegistration.output) ?? .queryFailed)
                 : .queryFailed
+            if NR5GRegistrationPolicy.shouldQueryC5GREG(
+                firmwareVersion: snapshot.firmwareVersion,
+                epsRegistration: snapshot.registrationState
+            ) {
+                let nrRegistration = command("AT+C5GREG?", timeout: 3_000)
+                snapshot.registrationState = NR5GRegistrationPolicy.effectiveRegistration(
+                    eps: snapshot.registrationState,
+                    nr: nrRegistration.isSuccess
+                        ? ATResponseParser.parseRegistrationState(
+                            nrRegistration.output,
+                            prefix: "+C5GREG"
+                        )
+                        : nil
+                )
+            }
 
             let voiceRegistration = command("AT+CREG?", timeout: 3_000)
             snapshot.voiceRegistrationState = voiceRegistration.isSuccess

@@ -41,6 +41,13 @@ void celldock_modem_destroy(CellDockModem *modem);
 size_t celldock_modem_copy_devices(CellDockModemDevice *devices, size_t capacity);
 
 /*
+ * Returns 1 for USB identities whose AT interface 2 CellDock can open:
+ * Quectel QDC507 (2C7C:0125), Quectel RM520N-GL (2C7C:0801) and the
+ * Baiwang module (2CA3:4006). Pure predicate; it does not touch IOKit.
+ */
+int celldock_modem_is_supported_identity(uint16_t vendor_id, uint16_t product_id);
+
+/*
  * Copies the raw USB string descriptors published by the physical device at
  * location_id. Output buffers are always NUL-terminated when their capacity
  * is greater than zero. Returns 1 when the device was found, otherwise zero.

@@ -233,6 +233,35 @@ enum SIMSlotSwitchingPolicy {
     }
 }
 
+/// Decides when to ask for 5G registration. AT+CEREG? only covers LTE/EPS,
+/// so a 5G SA-registered RM520N reports "not registered" there. Other
+/// firmware never receives AT+C5GREG?.
+enum NR5GRegistrationPolicy {
+    static let firmwarePrefixes = ["RM520N"]
+
+    static func shouldQueryC5GREG(
+        firmwareVersion: String?,
+        epsRegistration: CellularRegistrationState
+    ) -> Bool {
+        guard !epsRegistration.hasService,
+              let identity = firmwareVersion?
+                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                  .uppercased(),
+              !identity.isEmpty else {
+            return false
+        }
+        return firmwarePrefixes.contains { identity.hasPrefix($0.uppercased()) }
+    }
+
+    /// The 5G state replaces the EPS state only when +C5GREG parsed.
+    static func effectiveRegistration(
+        eps: CellularRegistrationState,
+        nr: CellularRegistrationState?
+    ) -> CellularRegistrationState {
+        nr ?? eps
+    }
+}
+
 struct ModemSnapshot: Equatable {
     var state: ModemConnectionState = .disconnected
     var lifecyclePhase: ModemLifecyclePhase = .normal
@@ -365,6 +394,13 @@ struct ModemSnapshot: Equatable {
                 return .needsIdentityConversion
             }
             return .unsupportedUSBConfiguration(usbConfiguration.compactDescription)
+        }
+        if normalizedIdentity == "2C7C:0801" {
+            // RM520N-GL: CellDock never writes USB configuration to this
+            // module, so any USBCFG is accepted and only ECM (usbnet 1) is
+            // usable. Other net modes are reported, never converted.
+            guard let usbNetMode else { return .inspecting }
+            return usbNetMode == 1 ? .ready : .unsupportedUSBNetMode(usbNetMode)
         }
         guard normalizedIdentity == "2C7C:0125" else {
             return .unsupportedIdentity(normalizedIdentity)

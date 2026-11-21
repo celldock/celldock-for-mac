@@ -23,7 +23,6 @@ final class NetworkServiceController {
     private var reportedAddressOverlapLocationIDs: Set<UInt32> = []
     private var preferredLocationID: UInt32?
     private let serviceRecordKey = "CellDock.modemNetworkServiceRecord"
-    private let knownNames = ["baiwang", "qdc507", "quectel", "ec25", "eg25"]
 
     func startMonitoring() {
         queue.async { [weak self] in
@@ -393,8 +392,7 @@ final class NetworkServiceController {
     }
 
     private func isKnownModemName(_ value: String) -> Bool {
-        let normalized = value.lowercased()
-        return knownNames.contains { normalized.contains($0) }
+        CellDockModemNetworkIdentity.isKnownInterfaceName(value)
     }
 
     private struct IPv4State {
@@ -499,7 +497,10 @@ final class NetworkServiceController {
     }
 
     private func matchesTargetModem(_ identity: USBIdentity) -> Bool {
-        identity.vendorID == 0x2C7C && identity.productID == 0x0125
+        CellDockModemNetworkIdentity.isSupported(
+            vendorID: identity.vendorID,
+            productID: identity.productID
+        )
     }
 
     private func usbIdentity(forBSDName bsdName: String) -> USBIdentity? {
