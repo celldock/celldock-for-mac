@@ -1681,3 +1681,5 @@
 "配置飞书机器人" = "Configurer le bot Feishu";
 "钉钉" = "DingTalk";
 "飞书" = "Feishu";
+"正在启用…" = "Activation…";
+"正在停用…" = "Désactivation…";
