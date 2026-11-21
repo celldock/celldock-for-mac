@@ -1683,3 +1683,36 @@
 "飞书" = "Feishu";
 "正在启用…" = "Activation…";
 "正在停用…" = "Désactivation…";
+
+/* Proxy page redesign */
+"%lld 个连接" = "%lld connexions";
+"不含密码" = "Mot de passe non inclus";
+"代理设置和钥匙串中保存的密码将被移除。" = "Les réglages du proxy et le mot de passe enregistré dans le trousseau seront supprimés.";
+"保存在钥匙串中 · 1–255 字节" = "Enregistré dans le trousseau · 1 à 255 octets";
+"出口" = "Sortie";
+"删除代理“%@”？" = "Supprimer le proxy « %@ » ?";
+"只接受这台 Mac 上的连接（127.0.0.1）。" = "N’accepte que les connexions provenant de ce Mac (127.0.0.1).";
+"同一网络的设备可通过 %@ 访问，必须开启用户名密码认证。" = "Les appareils du même réseau peuvent se connecter via %@. L’authentification par nom d’utilisateur et mot de passe est obligatoire.";
+"地址" = "Adresse";
+"基本信息" = "Général";
+"复制密码" = "Copier le mot de passe";
+"复制配置" = "Copier la config";
+"局域网模式下必须开启" = "Obligatoire en mode réseau local";
+"已复制" = "Copié";
+"显示密码" = "Afficher le mot de passe";
+"有未保存的更改" = "Modifications non enregistrées";
+"未命名代理" = "Proxy sans nom";
+"未找到局域网 IPv4 地址，暂以 0.0.0.0 显示。" = "Aucune adresse IPv4 locale trouvée ; 0.0.0.0 est affiché pour l’instant.";
+"生成" = "Générer";
+"监听" = "Écoute";
+"粘贴到 Clash 配置的 proxies: 下" = "À coller sous proxies: dans la config Clash";
+"粘贴到 Clash 配置的 proxies: 下，复制内容含完整密码" = "À coller sous proxies: dans la config Clash. Le texte copié contient le mot de passe complet";
+"粘贴到 Surge 配置的 [Proxy] 段" = "À coller dans la section [Proxy] de la config Surge";
+"粘贴到 Surge 配置的 [Proxy] 段，复制内容含完整密码" = "À coller dans la section [Proxy] de la config Surge. Le texte copié contient le mot de passe complet";
+"自动分配" = "Attribuer automatiquement";
+"草稿 · 已停用" = "Brouillon · Désactivé";
+"请先填写名称并保存，然后再启用。" = "Saisissez un nom et enregistrez avant d’activer.";
+"还原" = "Rétablir";
+"连接地址" = "Connexion";
+"隐藏密码" = "Masquer le mot de passe";
+"需要用户名和密码" = "Exiger un nom d’utilisateur et un mot de passe";

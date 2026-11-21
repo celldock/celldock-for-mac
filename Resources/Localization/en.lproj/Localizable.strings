@@ -1686,3 +1686,36 @@
 "飞书" = "Feishu";
 "正在启用…" = "Enabling…";
 "正在停用…" = "Disabling…";
+
+/* Proxy page redesign */
+"%lld 个连接" = "%lld connections";
+"不含密码" = "Password not included";
+"代理设置和钥匙串中保存的密码将被移除。" = "The proxy settings and the password saved in the keychain will be removed.";
+"保存在钥匙串中 · 1–255 字节" = "Saved in the keychain · 1–255 bytes";
+"出口" = "Egress";
+"删除代理“%@”？" = "Delete proxy “%@”?";
+"只接受这台 Mac 上的连接（127.0.0.1）。" = "Only accepts connections from this Mac (127.0.0.1).";
+"同一网络的设备可通过 %@ 访问，必须开启用户名密码认证。" = "Devices on the same network can connect via %@. Username and password authentication is required.";
+"地址" = "Address";
+"基本信息" = "General";
+"复制密码" = "Copy Password";
+"复制配置" = "Copy Config";
+"局域网模式下必须开启" = "Required in local network mode";
+"已复制" = "Copied";
+"显示密码" = "Show Password";
+"有未保存的更改" = "Unsaved changes";
+"未命名代理" = "Untitled Proxy";
+"未找到局域网 IPv4 地址，暂以 0.0.0.0 显示。" = "No local network IPv4 address found; showing 0.0.0.0 for now.";
+"生成" = "Generate";
+"监听" = "Listening";
+"粘贴到 Clash 配置的 proxies: 下" = "Paste under proxies: in your Clash config";
+"粘贴到 Clash 配置的 proxies: 下，复制内容含完整密码" = "Paste under proxies: in your Clash config. The copied text includes the full password";
+"粘贴到 Surge 配置的 [Proxy] 段" = "Paste into the [Proxy] section of your Surge config";
+"粘贴到 Surge 配置的 [Proxy] 段，复制内容含完整密码" = "Paste into the [Proxy] section of your Surge config. The copied text includes the full password";
+"自动分配" = "Auto Assign";
+"草稿 · 已停用" = "Draft · Disabled";
+"请先填写名称并保存，然后再启用。" = "Enter a name and save before enabling.";
+"还原" = "Revert";
+"连接地址" = "Connection";
+"隐藏密码" = "Hide Password";
+"需要用户名和密码" = "Require Username and Password";

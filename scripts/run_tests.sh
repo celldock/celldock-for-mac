@@ -62,6 +62,7 @@ swiftc \
   "$ROOT/Sources/CellDock/BoundSocket.swift" \
   "$ROOT/Sources/CellDock/SOCKSDNSResolver.swift" \
   "$ROOT/Sources/CellDock/SOCKSProxyModels.swift" \
+  "$ROOT/Sources/CellDock/SOCKSProxyClientConfig.swift" \
   "$ROOT/Sources/CellDock/VoWiFiRuntimeModels.swift" \
   "$ROOT/Sources/CellDock/VoWiFiRuntimeControl.swift" \
   "$ROOT/Sources/CellDock/VoWiFiUpstreamProxyModels.swift" \
