@@ -235,6 +235,14 @@ struct LineAppearanceResolver {
         )
     }
 
+    /// The line a module is using right now, for a call or draft in progress.
+    func currentAppearance(moduleID: CellularModuleID?) -> LineAppearance {
+        guard let moduleID, let module = modules.first(where: { $0.id == moduleID }) else {
+            return appearance(moduleID: moduleID, simSlot: nil)
+        }
+        return appearance(for: currentLine(of: module))
+    }
+
     /// One entry per attached module, at its active SIM slot.
     var sendOptions: [SendLineOption] {
         modules.map { module in

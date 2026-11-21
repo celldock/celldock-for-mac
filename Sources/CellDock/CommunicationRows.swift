@@ -11,7 +11,7 @@ struct CallDirectionGlyph: View {
 
     var body: some View {
         Image(systemName: direction == .incoming ? "arrow.down.left" : "arrow.up.right")
-            .font(.system(size: 10, weight: .semibold))
+            .font(.appSymbol(.indicator, weight: .semibold))
             .foregroundStyle(isMissed ? Color.red : Color.secondary)
             .accessibilityHidden(true)
     }
@@ -74,7 +74,7 @@ struct ConversationRowContent: View {
                 HStack(spacing: 4) {
                     if latestIsOutgoing {
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.appSymbol(.indicator, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .accessibilityLabel(L10n.tr("已发送"))
                     }
@@ -193,7 +193,7 @@ struct RecordingRowContent: View {
                 HStack(spacing: 4) {
                     if let playbackSymbol {
                         Image(systemName: playbackSymbol)
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.appSymbol(.indicator, weight: .semibold))
                             .foregroundStyle(Color.accentColor)
                             .accessibilityHidden(true)
                     } else {
@@ -302,7 +302,7 @@ struct MessageComposerBar: View {
                                 .controlSize(.small)
                         } else {
                             Image(systemName: "arrow.up")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSymbol(.small, weight: .semibold))
                                 .foregroundStyle(.white)
                         }
                     }
@@ -371,7 +371,7 @@ struct MessageComposerBar: View {
                     .font(.appCalloutStrong)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .padding(.leading, 6)

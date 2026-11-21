@@ -185,7 +185,7 @@ struct CommunicationModuleStatusMenu: View {
                 Spacer(minLength: 4)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 14)
             }
@@ -219,9 +219,9 @@ struct CommunicationModuleStatusMenu: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.tr("当前通信模组"))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(L10n.tr("短信和拨号使用所选模组"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,12 +233,12 @@ struct CommunicationModuleStatusMenu: View {
                 if appState.cellularModules.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "externaldrive.badge.questionmark")
-                            .font(.system(size: 22))
+                            .font(.appSymbol(.rail, weight: .regular))
                             .foregroundStyle(.secondary)
                         Text(L10n.tr("没有可用模组"))
-                            .font(.callout.weight(.medium))
+                            .font(.appCalloutStrong)
                         Text(L10n.tr("连接设备后将自动显示在这里"))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -314,11 +314,11 @@ struct CommunicationModuleStatusMenu: View {
 
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.appSymbol(.inline, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
                 } else if !module.isCommunicationEligible {
                     Text(module.statusText)
-                        .font(.caption2)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -445,11 +445,11 @@ private struct CommunicationModulePopoverAction: View {
                         .controlSize(.small)
                 } else if let trailingSystemImage {
                     Image(systemName: trailingSystemImage)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.appSymbol(.indicator, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
             }
-            .font(.callout)
+            .font(.appCallout)
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
             .contentShape(
@@ -485,7 +485,7 @@ private struct CommunicationRailView: View {
             Spacer()
             if appState.isPresentationPrivacyEnabled {
                 Image(systemName: "checkmark.shield.fill")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.appSymbol(.button, weight: .semibold))
                     .foregroundStyle(.green)
                     .frame(width: 44, height: 28)
                     .help(L10n.tr("演示隐私保护已开启"))
@@ -599,33 +599,34 @@ private struct ActiveCallView: View {
         VStack(spacing: compact ? 12 : 17) {
             callStateBadge
 
-            CallAvatar(
-                title: avatarTitle,
-                fallbackSystemImage: callDirectionSystemImage,
-                tint: callAvatarTint,
-                size: compact ? 74 : 94
+            ContactFaceAvatar(
+                address: appState.call.number ?? "",
+                size: compact ? 74 : 94,
+                tint: callLine.tint,
+                badgeText: callLine.badgeText
             )
+            .help(callLine.fullTitle)
 
             VStack(spacing: 5) {
                 Text(displayName)
-                    .font(.system(size: compact ? 25 : 30, weight: .semibold))
+                    .font(.appDisplay)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
 
                 if contacts.displayName(for: callNumber) != nil {
                     Text(appState.privacyPresentation.phoneNumber(callNumber))
-                        .font(.title3.monospacedDigit())
+                        .font(.appHeadline.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
 
                 if appState.call.phase == .active, let startedAt = appState.call.startedAt {
                     Text(startedAt, style: .timer)
-                        .font(.title3.monospacedDigit().weight(.medium))
+                        .font(.appHeadline.monospacedDigit().weight(.medium))
                 }
 
                 Text(callRouteSummary)
-                    .font(.callout)
+                    .font(.appCallout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
@@ -638,7 +639,7 @@ private struct ActiveCallView: View {
 
             if let error = appState.call.lastError, appState.call.phase == .recovering {
                 Label(L10n.tr(error), systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
                     .frame(maxWidth: 460)
             }
@@ -684,7 +685,7 @@ private struct ActiveCallView: View {
                 }
 
                 Text(canAnswer ? L10n.tr("使用 Mac 接听") : L10n.tr("USB 语音通道尚未就绪"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(canAnswer ? Color.secondary : Color.orange)
             }
             .frame(maxWidth: 390)
@@ -758,7 +759,7 @@ private struct ActiveCallView: View {
         VStack(spacing: compact ? 10 : 14) {
             HStack {
                 Text("通话按键")
-                    .font(.headline)
+                    .font(.appBodyStrong)
 
                 Spacer()
 
@@ -766,7 +767,7 @@ private struct ActiveCallView: View {
                     dtmfDigits = ""
                 }
                 .buttonStyle(.plain)
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
                 .disabled(dtmfDigits.isEmpty)
                 .help(L10n.tr("清空按键显示，不会撤回已发送的按键"))
@@ -775,8 +776,8 @@ private struct ActiveCallView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(dtmfDigits.isEmpty ? L10n.tr("直接点击或使用 Mac 键盘") : dtmfDigits)
                     .font(dtmfDigits.isEmpty
-                        ? .callout
-                        : .title2.monospacedDigit().weight(.medium))
+                        ? .appCallout
+                        : .appTitle.monospacedDigit().weight(.medium))
                     .foregroundStyle(dtmfDigits.isEmpty ? Color.secondary : Color.primary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -819,7 +820,7 @@ private struct ActiveCallView: View {
                 Text(startedAt, style: .timer)
                     .monospacedDigit()
             }
-            .font(.caption.weight(.medium))
+            .font(.appCaptionStrong)
             .foregroundStyle(.red)
             .accessibilityElement(children: .combine)
         } else if recordings.phase == .finalizing {
@@ -829,7 +830,7 @@ private struct ActiveCallView: View {
 
         if let recordingError = recordings.lastError {
             Label(L10n.tr(recordingError), systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.red)
         }
     }
@@ -898,18 +899,8 @@ private struct ActiveCallView: View {
         )
     }
 
-    private var avatarTitle: String? {
-        contacts.displayName(for: callNumber) == nil ? nil : String(displayName.prefix(1))
-    }
-
-    private var callDirectionSystemImage: String {
-        appState.call.direction == .incoming
-            ? "phone.arrow.down.left.fill"
-            : "phone.arrow.up.right.fill"
-    }
-
-    private var callAvatarTint: Color {
-        appState.call.phase == .incoming ? .orange : .blue
+    private var callLine: LineAppearance {
+        appState.lineAppearanceResolver.currentAppearance(moduleID: appState.call.moduleID)
     }
 
     private var callRouteSummary: String {
@@ -944,7 +935,7 @@ private struct ActiveCallView: View {
 
     private var callStateBadge: some View {
         Label(callStateText, systemImage: callStateSystemImage)
-            .font(.caption.weight(.semibold))
+            .font(.appCaption.weight(.semibold))
             .foregroundStyle(callTint)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
@@ -990,31 +981,6 @@ private struct ActiveCallView: View {
     }
 }
 
-private struct CallAvatar: View {
-    let title: String?
-    let fallbackSystemImage: String
-    let tint: Color
-    let size: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(tint.gradient)
-            if let title {
-                Text(title)
-                    .font(.system(size: size * 0.40, weight: .semibold))
-            } else {
-                Image(systemName: fallbackSystemImage)
-                    .font(.system(size: size * 0.34, weight: .semibold))
-            }
-        }
-        .foregroundStyle(.white)
-        .frame(width: size, height: size)
-        .shadow(color: tint.opacity(0.22), radius: 11, y: 4)
-        .accessibilityHidden(true)
-    }
-}
-
 private struct CallControlPressStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1047,12 +1013,12 @@ private struct DTMFPad: View {
                 } label: {
                     VStack(spacing: 0) {
                         Text(tone.digit)
-                            .font(.system(size: keySize * 0.38, weight: .medium, design: .rounded))
+                            .font(.system(size: keySize * 0.38, weight: .medium))
                         Text(tone.letters.isEmpty ? " " : tone.letters)
-                            .font(.system(size: max(7, keySize * 0.12), weight: .semibold))
+                            .font(.system(size: max(10, keySize * 0.12), weight: .semibold))
                             .tracking(0.7)
                             .foregroundStyle(.secondary)
-                            .frame(height: max(8, keySize * 0.16))
+                            .frame(height: max(11, keySize * 0.16))
                     }
                     .frame(width: keySize, height: keySize)
                     .adaptiveGlassSurface(
@@ -1774,7 +1740,7 @@ private struct RecordingsManagementView: View {
                                 .help(L10n.tr("录音过程中部分音频未能写入"))
                         }
                     }
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 }
             }
@@ -1827,16 +1793,16 @@ private struct RecordingsManagementView: View {
                             Circle()
                                 .fill(.tint.opacity(0.13))
                             Image(systemName: "waveform")
-                                .font(.system(size: 32, weight: .medium))
+                                .font(.appSymbol(.hero))
                                 .foregroundStyle(.tint)
                         }
                         .frame(width: 76, height: 76)
 
                         VStack(alignment: .leading, spacing: 5) {
                             Text(presentedRecordingTitle(record))
-                                .font(.title2.weight(.semibold))
+                                .font(.appTitle)
                             Text(appState.privacyPresentation.phoneNumber(record.number))
-                                .font(.body.monospacedDigit())
+                                .font(.appBody.monospacedDigit())
                                 .foregroundStyle(.secondary)
                             Label(
                                 record.direction == .incoming ? L10n.tr("来电录音") : L10n.tr("去电录音"),
@@ -1844,7 +1810,7 @@ private struct RecordingsManagementView: View {
                                     ? "phone.arrow.down.left"
                                     : "phone.arrow.up.right"
                             )
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -1879,7 +1845,7 @@ private struct RecordingsManagementView: View {
 
                     VStack(alignment: .leading, spacing: 9) {
                         Text("名称")
-                            .font(.headline)
+                            .font(.appBodyStrong)
                         HStack {
                             TextField(
                                 appState.isPresentationPrivacyEnabled
@@ -1919,7 +1885,7 @@ private struct RecordingsManagementView: View {
 
                     if let error = recordings.lastError {
                         Label(L10n.tr(error), systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.red)
                     }
                 }
@@ -1945,7 +1911,7 @@ private struct RecordingsManagementView: View {
             LabeledContent("存储", value: L10n.tr("仅保存在这台 Mac"))
             if record.isIncomplete {
                 Label("部分音频因写入队列过载而缺失，通话本身未受影响。", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             }
         }
@@ -2093,9 +2059,9 @@ private struct ContactsManagementView: View {
                 List(filteredContacts, selection: $selectedContactID) { contact in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(presentedContactName(contact))
-                            .font(.body.weight(.medium))
+                            .font(.appBody.weight(.medium))
                         Text(presentedContactDetail(contact))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -2167,14 +2133,14 @@ private struct ContactsManagementView: View {
                         ZStack {
                             Circle().fill(.quaternary)
                             Image(systemName: "person.fill")
-                                .font(.system(size: 30, weight: .medium))
+                                .font(.appSymbol(.hero))
                                 .foregroundStyle(.secondary)
                         }
                         .frame(width: 78, height: 78)
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(presentedContactName(contact))
-                                .font(.largeTitle.weight(.semibold))
+                                .font(.appDisplay)
                             if !contact.organizationName.isEmpty {
                                 Text(appState.privacyPresentation.privateDetail(
                                     contact.organizationName
@@ -2218,10 +2184,10 @@ private struct ContactsManagementView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(phone.label)
-                                            .font(.caption)
+                                            .font(.appCaption)
                                             .foregroundStyle(.secondary)
                                         Text(appState.privacyPresentation.phoneNumber(phone.value))
-                                            .font(.body.monospacedDigit())
+                                            .font(.appBody.monospacedDigit())
                                             .textSelection(.enabled)
                                     }
                                     Spacer()
@@ -2346,7 +2312,7 @@ private struct ContactDetailSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(L10n.tr(title))
-                .font(.headline)
+                .font(.appBodyStrong)
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2375,9 +2341,9 @@ private struct ContactEditorView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(draft.id == nil ? L10n.tr("新建联系人") : L10n.tr("编辑联系人"))
-                        .font(.title2.weight(.semibold))
+                        .font(.appTitle)
                     Text("更改将保存到 macOS 系统通讯录")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -2470,7 +2436,7 @@ private struct ContactEditorView: View {
             HStack {
                 if let error = contacts.lastError {
                     Label(L10n.tr(error), systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.red)
                         .lineLimit(2)
                 }

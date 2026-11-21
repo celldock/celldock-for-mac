@@ -19,13 +19,13 @@ struct SMSDetailView: View {
             VStack(spacing: 18) {
                 HStack(spacing: 12) {
                     Image(systemName: "message.fill")
-                        .font(.title2)
+                        .font(.appSymbol(.button, weight: .regular))
                         .foregroundStyle(Color.accentColor)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(verbatim: senderIdentity)
-                            .font(.title3.weight(.semibold))
+                            .font(.appHeadline)
                         Text(verbatim: fullTimestamp)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                     .textSelection(.enabled)
@@ -34,7 +34,7 @@ struct SMSDetailView: View {
 
                 ScrollView {
                     SMSMessageContentView(message: message, onOpenDialer: close)
-                        .font(.body)
+                        .font(.appBody)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .padding(16)
                 }
@@ -44,7 +44,7 @@ struct SMSDetailView: View {
                     Text(verbatim: appState.isPresentationPrivacyEnabled
                         ? L10n.tr("内容已隐藏")
                         : L10n.tr("%lld 个字符", Int64(message.body.count)))
-                        .font(.caption2)
+                        .font(.appCaption)
                         .foregroundStyle(.tertiary)
                     Spacer()
                     Button {

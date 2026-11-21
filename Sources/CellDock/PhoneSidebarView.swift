@@ -60,7 +60,7 @@ struct PhoneSidebarView: View {
     private func recentCallRow(_ record: CallHistoryRecord) -> some View {
         HStack(spacing: 8) {
             Image(systemName: callIcon(record))
-                .font(.caption.weight(.semibold))
+                .font(.appSymbol(.indicator, weight: .semibold))
                 .foregroundStyle(record.isMissed ? Color.red : Color.secondary)
                 .frame(width: 15)
 
@@ -69,14 +69,14 @@ struct PhoneSidebarView: View {
                     contactName: contacts.displayName(for: record.number),
                     number: record.number
                 ))
-                    .font(.callout)
+                    .font(.appCallout)
                     .foregroundStyle(record.isMissed ? Color.red : Color.primary)
                     .lineLimit(1)
 
                 Text(verbatim: [moduleName(record), record.startedAt.formatted(.dateTime.month().day().hour().minute())]
                     .compactMap { $0 }
                     .joined(separator: " · "))
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -123,7 +123,7 @@ struct PhoneSidebarView: View {
         let isPlaying = recordings.playingRecordingID == record.id
         return HStack(spacing: 8) {
             Image(systemName: isPlaying ? "waveform.circle.fill" : "waveform")
-                .font(.caption.weight(.semibold))
+                .font(.appSymbol(.indicator, weight: .semibold))
                 .foregroundStyle(isPlaying ? Color.accentColor : Color.secondary)
                 .frame(width: 15)
 
@@ -133,11 +133,11 @@ struct PhoneSidebarView: View {
                     contactName: contacts.displayName(for: record.number),
                     number: record.number
                 ))
-                    .font(.callout)
+                    .font(.appCallout)
                     .lineLimit(1)
 
                 Text(verbatim: recordingMetadata(record))
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -184,7 +184,7 @@ struct PhoneSidebarView: View {
 
     private func sidebarEmptyRow(_ title: String) -> some View {
         Text(verbatim: title)
-            .font(.caption)
+            .font(.appCaption)
             .foregroundStyle(.tertiary)
             .padding(.leading, 23)
             .accessibilityHidden(true)

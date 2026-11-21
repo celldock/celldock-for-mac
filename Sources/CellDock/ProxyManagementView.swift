@@ -40,7 +40,7 @@ struct ProxyManagementView: View {
             NetworkToolsTabBar(selection: $networkToolsTab)
 
             HStack {
-                Text(verbatim: L10n.tr("代理")).font(.title2.weight(.semibold))
+                Text(verbatim: L10n.tr("代理")).font(.appTitle)
                 Spacer()
                 CommunicationIconActionButton(
                     systemImage: "plus",
@@ -232,13 +232,13 @@ private struct ProxyRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 nameText.lineLimit(1)
                 detailText
-                    .font(.caption)
+                    .font(.appCaption)
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
             if case let .running(connections) = state {
                 Text(verbatim: "\(connections)")
-                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .font(.appCaption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.green)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
@@ -277,7 +277,7 @@ private struct ProxyRow: View {
         } else {
             (Text(verbatim: "\(configuration.listenScope.title) · ") +
                 Text(verbatim: ":\(configuration.port)")
-                .font(.system(.caption, design: .monospaced)))
+                .font(.appCaption.monospaced()))
                 .foregroundStyle(.secondary)
         }
     }
@@ -334,7 +334,7 @@ private struct ProxyEditorView: View {
 
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.circle.fill")
-                            .font(.callout)
+                            .font(.appCallout)
                             .foregroundStyle(.red)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .adaptiveGlassSurface(
@@ -385,12 +385,12 @@ private struct ProxyEditorView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(verbatim: draft.trimmedName.isEmpty ? L10n.tr("新建代理") : draft.name)
-                        .font(.title.weight(.semibold))
+                        .font(.appTitle)
                         .lineLimit(1)
                     HStack(spacing: 8) {
                         statusCapsule
                         Text(verbatim: moduleTitle)
-                            .font(.callout)
+                            .font(.appCallout)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -406,7 +406,7 @@ private struct ProxyEditorView: View {
             }
             if let enableHint {
                 Label(enableHint, systemImage: "info.circle")
-                    .font(.callout)
+                    .font(.appCallout)
                     .foregroundStyle(.orange)
             }
         }
@@ -424,7 +424,7 @@ private struct ProxyEditorView: View {
             Circle().fill(foreground).frame(width: 7, height: 7)
             Text(verbatim: state.statusText)
         }
-        .font(.callout.weight(.medium))
+        .font(.appCalloutStrong)
         .foregroundStyle(foreground)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -494,7 +494,7 @@ private struct ProxyEditorView: View {
                         snippetFormat,
                         revealPassword: isPasswordRevealed
                     ))
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.appMono)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -516,7 +516,7 @@ private struct ProxyEditorView: View {
                 )
 
                 Text(verbatim: snippetCaption)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
 
                 if draft.listenScope == .lan && lanAddress == nil {
@@ -524,7 +524,7 @@ private struct ProxyEditorView: View {
                         L10n.tr("未找到局域网 IPv4 地址，暂以 0.0.0.0 显示。"),
                         systemImage: "exclamationmark.triangle.fill"
                     )
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
                 }
 
@@ -580,16 +580,14 @@ private struct ProxyEditorView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(verbatim: title)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
             Text(verbatim: value)
-                .font(.callout.weight(.medium))
+                .font(.appCalloutStrong)
                 .lineLimit(2)
             if let detail, !detail.isEmpty {
                 Text(verbatim: detail)
-                    .font(monospacedDetail
-                        ? .system(.caption, design: .monospaced)
-                        : .caption)
+                    .font(monospacedDetail ? .appCaption.monospaced() : .appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -653,7 +651,7 @@ private struct ProxyEditorView: View {
                                 format: .number.grouping(.never)
                             )
                             .labelsHidden()
-                            .font(.system(.body, design: .monospaced))
+                            .font(.appMono)
                             .frame(width: 90)
                             Button(L10n.tr("自动分配"), action: assignPort)
                                 .adaptiveGlassButton(.regular)
@@ -671,11 +669,11 @@ private struct ProxyEditorView: View {
                         ),
                         systemImage: "exclamationmark.triangle.fill"
                     )
-                    .font(.callout)
+                    .font(.appCallout)
                     .foregroundStyle(.orange)
                 } else {
                     Text(verbatim: L10n.tr("只接受这台 Mac 上的连接（127.0.0.1）。"))
-                        .font(.callout)
+                        .font(.appCallout)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -761,11 +759,11 @@ private struct ProxyEditorView: View {
                 if isAuthenticationEnabled {
                     if credentialsInvalid {
                         Text(verbatim: L10n.tr("用户名和密码必须为 1–255 字节。"))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.red)
                     } else {
                         Text(verbatim: L10n.tr("保存在钥匙串中 · 1–255 字节"))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -789,7 +787,7 @@ private struct ProxyEditorView: View {
                     Circle().fill(Color.orange).frame(width: 7, height: 7)
                     Text(verbatim: L10n.tr("有未保存的更改"))
                 }
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
                 Button(L10n.tr("还原"), action: revert)
                     .adaptiveGlassButton(.regular)
@@ -870,7 +868,7 @@ private struct ProxyEditorCard<Accessory: View, Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center) {
-                Text(verbatim: title).font(.headline)
+                Text(verbatim: title).font(.appBodyStrong)
                 Spacer(minLength: 12)
                 accessory
             }
@@ -918,7 +916,7 @@ private struct ProxyPasswordField: View {
             }
             .textFieldStyle(.plain)
             .labelsHidden()
-            .font(.system(.body, design: .monospaced))
+            .font(.appMono)
             .frame(minWidth: 160)
 
             iconButton(

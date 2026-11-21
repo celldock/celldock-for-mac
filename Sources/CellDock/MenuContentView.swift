@@ -132,7 +132,7 @@ struct MenuContentView: View {
                     Label(L10n.tr("打开短信"), systemImage: "message.fill")
                     if appState.unreadCount > 0 {
                         Text("\(min(appState.unreadCount, 99))")
-                            .font(.caption2.bold())
+                            .font(.appCaption.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(.tint, in: Capsule())
@@ -150,7 +150,7 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "trash.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSymbol(.small, weight: .semibold))
                     .foregroundStyle(.red)
                     .frame(width: 32, height: 32)
                     .background(Color.red.opacity(0.11), in: Circle())
@@ -158,10 +158,10 @@ struct MenuContentView: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text(L10n.tr("删除这条短信？"))
-                        .font(.headline)
+                        .font(.appBodyStrong)
                         .accessibilityAddTraits(.isHeader)
                     Text(L10n.tr("删除后这条短信将不再出现在 CellDock 中，此操作无法撤销。"))
-                        .font(.callout)
+                        .font(.appCallout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -225,10 +225,10 @@ struct MenuContentView: View {
         VStack(spacing: 10) {
             HStack {
                 Label(L10n.tr("短信"), systemImage: "message.fill")
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 if appState.unreadCount > 0 {
                     Text("\(appState.unreadCount)")
-                        .font(.caption2.bold())
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -239,7 +239,7 @@ struct MenuContentView: View {
                     Button(L10n.tr("全部已读")) { appState.markAllRead() }
                         .adaptiveGlassButton()
                         .controlSize(.small)
-                        .font(.caption)
+                        .font(.appCaption)
                 }
                 Button {
                     presentSMSComposer()
@@ -248,7 +248,7 @@ struct MenuContentView: View {
                 }
                 .adaptiveGlassButton()
                 .controlSize(.small)
-                .font(.caption)
+                .font(.appCaption)
                 .disabled(
                     appState.currentCommunicationModule?.isCommunicationEligible != true ||
                         appState.currentCommunicationModuleHasCall
@@ -262,12 +262,12 @@ struct MenuContentView: View {
             if appState.messages.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "tray")
-                        .font(.title2)
+                        .font(.appSymbol(.button, weight: .regular))
                         .foregroundStyle(.tertiary)
                     Text(appState.cellularModules.contains(where: { $0.modem.isConnected })
                         ? L10n.tr("模组中暂无短信")
                         : L10n.tr("插入模组后会在后台接收短信"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -298,11 +298,11 @@ struct MenuContentView: View {
                 } label: {
                     HStack {
                         Text(verbatim: messageIdentity(message))
-                            .font(.subheadline.weight(message.isRead ? .medium : .bold))
+                            .font(.appCaption.weight(message.isRead ? .medium : .semibold))
                             .lineLimit(1)
                         Spacer()
                         Text(message.timestamp, style: .relative)
-                            .font(.caption2)
+                            .font(.appCaption)
                             .foregroundStyle(.tertiary)
                     }
                 }
@@ -312,7 +312,7 @@ struct MenuContentView: View {
                 if let code = message.verificationCode {
                     if appState.isPresentationPrivacyEnabled {
                         Label(L10n.tr("验证码已隐藏"), systemImage: "eye.slash.fill")
-                            .font(.caption.weight(.semibold))
+                            .font(.appCaption.weight(.semibold))
                             .foregroundStyle(.secondary)
                     } else {
                         VerificationCodeBadge(code: code) {
@@ -326,7 +326,7 @@ struct MenuContentView: View {
                     presentMessageDetail(message)
                 } label: {
                     Text(verbatim: appState.privacyPresentation.messagePreview(message.preview))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(message.isRead ? .secondary : .primary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -389,7 +389,7 @@ struct MenuContentView: View {
                 .controlSize(.mini)
             }
         }
-        .font(.caption)
+        .font(.appCaption)
         .foregroundStyle(isError ? Color.red : Color.primary)
         .padding(9)
         .adaptiveGlassSurface(

@@ -42,9 +42,9 @@ struct SMSComposerView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(isReply ? L10n.tr("回复短信") : L10n.tr("新短信"))
-                        .font(.title2.weight(.semibold))
+                        .font(.appTitle)
                     Text(L10n.tr("通过当前 SIM 卡发送"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -69,7 +69,7 @@ struct SMSComposerView: View {
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                 }
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let segmentCount, segmentCount > 1 {
@@ -77,13 +77,13 @@ struct SMSComposerView: View {
                     L10n.tr("运营商会按 %lld 条长短信分片计费。", Int64(segmentCount)),
                     systemImage: "info.circle"
                 )
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
             HStack {
                 Text(appState.moduleIsConnected(nil) ? L10n.tr("模块已连接") : L10n.tr("模块未连接"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(appState.moduleIsConnected(nil) ? Color.secondary : Color.red)
                 Spacer()
                 Button(L10n.tr("取消"), role: .cancel) { close() }
@@ -114,7 +114,7 @@ struct SMSComposerView: View {
     private var recipientSection: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(L10n.tr("收件人"))
-                .font(.caption.weight(.semibold))
+                .font(.appCaption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Group {
                 if appState.isPresentationPrivacyEnabled {
@@ -133,11 +133,11 @@ struct SMSComposerView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(L10n.tr("内容"))
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(verbatim: compositionSummary)
-                    .font(.caption2.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             ZStack(alignment: .topLeading) {
@@ -149,7 +149,7 @@ struct SMSComposerView: View {
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $messageBody)
-                    .font(.body)
+                    .font(.appBody)
                     .focused($messageFocused)
                     .scrollContentBackground(.hidden)
                     .padding(5)

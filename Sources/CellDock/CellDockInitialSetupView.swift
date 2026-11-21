@@ -73,7 +73,7 @@ struct CellDockInitialSetupView: View {
                 Circle()
                     .fill(setupColor.opacity(0.14))
                 Image(systemName: setupIcon)
-                    .font(.system(size: 23, weight: .semibold))
+                    .font(.appSymbol(.large, weight: .semibold))
                     .foregroundStyle(setupColor)
                     .symbolEffect(.pulse, isActive: isBusy)
             }
@@ -81,14 +81,14 @@ struct CellDockInitialSetupView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(setupTitle)
-                    .font(.title3.weight(.semibold))
+                    .font(.appHeadline)
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     if appState.modem.initialSetupState == .needsIdentityConversion {
                         Button {
                             isConversionInfoPresented.toggle()
                         } label: {
                             Image(systemName: "info.circle")
-                                .font(.caption.weight(.semibold))
+                                .font(.appSymbol(.indicator, weight: .semibold))
                                 .foregroundStyle(Color.accentColor)
                         }
                         .buttonStyle(.plain)
@@ -103,7 +103,7 @@ struct CellDockInitialSetupView: View {
                     }
 
                     Text(setupDetail)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -114,7 +114,7 @@ struct CellDockInitialSetupView: View {
 
             if isSafeDJISource {
                 Label("安全已验证", systemImage: "checkmark.shield.fill")
-                    .font(.caption2.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -136,10 +136,10 @@ struct CellDockInitialSetupView: View {
     private var identityConversionPopover: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("转换配置", systemImage: "arrow.triangle.2.circlepath")
-                .font(.headline)
+                .font(.appBodyStrong)
 
             Text("CellDock 会先完成 QADBKEY 解锁；仅当当前值精确匹配已验证配置时才写入，并在逐项回读成功后重启模块。")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -157,7 +157,8 @@ struct CellDockInitialSetupView: View {
             )
 
             Text("顺序：VID:PID, DIAG, NMEA, AT, MODEM, NET, ADB, AUDIO")
-                .font(.system(size: 9.5, weight: .regular, design: .monospaced))
+                .font(.appMicro.monospaced().weight(.regular))
+                .minimumScaleFactor(0.85)
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
 
@@ -193,11 +194,11 @@ struct CellDockInitialSetupView: View {
     private func configurationLine(title: String, value: String, color: Color) -> some View {
         HStack(spacing: 9) {
             Text(title)
-                .font(.caption.weight(.semibold))
+                .font(.appCaption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 45, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.appCaptionStrong.monospaced())
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .textSelection(.enabled)
@@ -220,7 +221,7 @@ struct CellDockInitialSetupView: View {
                 .fontWeight(.semibold)
                 .monospacedDigit()
         }
-        .font(.caption)
+        .font(.appCaption)
     }
 
     private func configurationValue(_ configuration: ModemUSBConfiguration?) -> String {
@@ -267,10 +268,10 @@ struct CellDockInitialSetupView: View {
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 19)
             Text(title)
-                .font(.subheadline.weight(.medium))
+                .font(.appCaptionStrong)
             Spacer(minLength: 10)
             Text(value)
-                .font(.subheadline)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -283,9 +284,9 @@ struct CellDockInitialSetupView: View {
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 3) {
                 Text(confirmationTitle(confirmation))
-                    .font(.subheadline.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                 Text(confirmationDetail(confirmation))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -338,7 +339,7 @@ struct CellDockInitialSetupView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text(busyActionTitle)
-                        .font(.subheadline.weight(.medium))
+                        .font(.appCaptionStrong)
                         .foregroundStyle(.secondary)
                 }
             } else if appState.modem.initialSetupState == .needsIdentityConversion {

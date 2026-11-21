@@ -29,10 +29,10 @@ struct CellularNetworkModeMenu: View {
                 Text(mode.localizedTitle)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
-            .font(compact ? .caption2.weight(.semibold) : .callout.weight(.semibold))
+            .font(compact ? .appCaption.weight(.semibold) : .appCallout.weight(.semibold))
             .padding(.horizontal, compact ? 7 : 9)
             .padding(.vertical, compact ? 4 : 6)
             .background(Color.secondary.opacity(0.08), in: Capsule())

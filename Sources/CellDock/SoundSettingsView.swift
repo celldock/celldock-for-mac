@@ -31,7 +31,7 @@ struct SoundSettingsView: View {
                 L10n.tr("声音会从 Mac 扬声器播放；可随时试听或恢复默认。"),
                 systemImage: "speaker.wave.2"
             )
-            .font(.caption)
+            .font(.appCaption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 4)
@@ -61,16 +61,16 @@ struct SoundSettingsView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 19, weight: .semibold))
+                    .font(.appSymbol(.rail, weight: .semibold))
                     .foregroundStyle(tint)
                     .frame(width: 42, height: 42)
                     .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(kind.title)
-                        .font(.headline)
+                        .font(.appBodyStrong)
                     Text(description)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
 
@@ -150,16 +150,16 @@ struct SoundSettingsView: View {
             Button(action: select) {
                 HStack(spacing: 10) {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.appSymbol(.button, weight: .semibold))
                         .foregroundStyle(isSelected ? tint : Color.secondary)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(title)
-                            .font(.subheadline.weight(.semibold))
+                            .font(.appCaption.weight(.semibold))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(formatDuration(duration))
-                            .font(.caption.monospacedDigit())
+                            .font(.appCaption.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
 

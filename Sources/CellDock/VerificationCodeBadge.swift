@@ -15,11 +15,11 @@ struct VerificationCodeBadge: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "key.fill")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
                 Text(verbatim: code)
-                    .font(.caption.monospaced().weight(.semibold))
+                    .font(.appCaption.monospaced().weight(.semibold))
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
             }
             .foregroundStyle(isOnAccentBackground ? Color.white : (copied ? Color.green : Color.accentColor))
             .padding(.horizontal, 9)

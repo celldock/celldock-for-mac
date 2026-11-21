@@ -62,7 +62,7 @@ struct MenuBarCommunicationSections: View {
     private func moduleHeader(_ group: MenuBarModuleAlertGroup) -> some View {
         HStack(spacing: 9) {
             Image(systemName: "simcard.fill")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appSymbol(.small, weight: .semibold))
                 .foregroundStyle(group.isConnected ? Color.green : Color.secondary)
                 .frame(width: 25, height: 25)
                 .background(
@@ -72,11 +72,11 @@ struct MenuBarCommunicationSections: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: group.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .lineLimit(1)
                 if let detail = group.detail {
                     Text(verbatim: detail)
-                        .font(.caption2)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -86,7 +86,7 @@ struct MenuBarCommunicationSections: View {
 
             if group.totalAttentionCount > 0 {
                 Text(group.totalAttentionCount > 99 ? "99+" : "\(group.totalAttentionCount)")
-                    .font(.caption2.bold().monospacedDigit())
+                    .font(.appCaption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -100,10 +100,10 @@ struct MenuBarCommunicationSections: View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
                 Label(L10n.tr("未读短信"), systemImage: "message.fill")
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
 
                 Text(group.unreadMessageCount > 99 ? "99+" : "\(group.unreadMessageCount)")
-                    .font(.caption2.bold().monospacedDigit())
+                    .font(.appCaption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -117,7 +117,7 @@ struct MenuBarCommunicationSections: View {
                     })
                 }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
             }
             .padding(.bottom, 4)
@@ -155,19 +155,19 @@ struct MenuBarCommunicationSections: View {
                                 .accessibilityHidden(true)
 
                             Text(verbatim: displayName(for: conversation.address))
-                                .font(.subheadline.bold())
+                                .font(.appCaption.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
 
                             Spacer(minLength: 6)
 
                             Text(message.timestamp, style: .relative)
-                                .font(.caption2)
+                                .font(.appCaption)
                                 .foregroundStyle(.tertiary)
                         }
 
                         Text(verbatim: appState.privacyPresentation.messagePreview(message.preview))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
@@ -189,10 +189,10 @@ struct MenuBarCommunicationSections: View {
         VStack(spacing: 0) {
             HStack(spacing: 7) {
                 Label(L10n.tr("未接来电"), systemImage: "phone.down.fill")
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
 
                 Text(group.missedCalls.count > 99 ? "99+" : "\(group.missedCalls.count)")
-                    .font(.caption2.bold().monospacedDigit())
+                    .font(.appCaption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -230,19 +230,19 @@ struct MenuBarCommunicationSections: View {
                             .accessibilityHidden(true)
 
                         Text(verbatim: displayName(for: record.number))
-                            .font(.subheadline.bold())
+                            .font(.appCaption.weight(.semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
                         Spacer(minLength: 6)
 
                         Text(record.startedAt, style: .relative)
-                            .font(.caption2)
+                            .font(.appCaption)
                             .foregroundStyle(.tertiary)
                     }
 
                     Text(L10n.tr("未接来电"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.red)
                         .lineLimit(1)
                 }
@@ -265,7 +265,7 @@ struct MenuBarCommunicationSections: View {
                 .frame(width: 26, height: 26)
 
             Image(systemName: systemName)
-                .font(.caption2.weight(.bold))
+                .font(.appSymbol(.indicator, weight: .semibold))
                 .foregroundStyle(tint)
         }
     }

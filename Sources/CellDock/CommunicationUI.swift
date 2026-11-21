@@ -298,7 +298,7 @@ struct CommunicationGlassTabs<Selection: Hashable>: View {
                     }
                 } label: {
                     Text(L10n.tr(item.1))
-                        .font(.callout.weight(isSelected ? .semibold : .regular))
+                        .font(.appCallout.weight(isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 5)
@@ -341,7 +341,7 @@ struct CommunicationIconActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.appSymbol(.button, weight: .semibold))
         }
         .buttonStyle(
             CommunicationIconActionButtonStyle(
@@ -422,7 +422,7 @@ struct CircularLiquidCallButton: View {
 
                 if showsTitle {
                     Text(L10n.tr(title))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                 }

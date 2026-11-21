@@ -87,7 +87,7 @@ private struct VoWiFiView: View {
 
             HStack {
                 Text(verbatim: L10n.tr("VoWiFi"))
-                    .font(.title2.weight(.semibold))
+                    .font(.appTitle)
                 Spacer()
                 CommunicationIconActionButton(
                     systemImage: "arrow.clockwise",
@@ -171,7 +171,7 @@ private struct VoWiFiModuleRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: module.localizedDisplayName).lineLimit(1)
                 Text(verbatim: state.localizedShortTitle)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -245,9 +245,9 @@ private struct VoWiFiDetailView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: L10n.tr("软件 VoWiFi 运行时"))
-                    .font(.title2.weight(.semibold))
+                    .font(.appTitle)
                 Text(verbatim: module.selectorTitle)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -265,7 +265,7 @@ private struct VoWiFiDetailView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Label(state.localizedTitle, systemImage: VoWiFiStatusStyle.icon(for: state))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                     .foregroundStyle(VoWiFiStatusStyle.color(for: state))
                 Spacer()
                 Toggle(L10n.tr("启用"), isOn: runningBinding)
@@ -310,9 +310,9 @@ private struct VoWiFiDetailView: View {
     private var explanationCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(L10n.tr("工作方式"), systemImage: "checkmark.shield")
-                .font(.headline)
+                .font(.appBodyStrong)
             Text(verbatim: L10n.tr("vowifi-go 在 Mac 的特权网络进程中运行，通过受限桥向模组请求 SIM/ISIM AKA，并在 Mac 上建立 utun、SWu/ePDG 隧道和 IMS 注册。可选的 SOCKS5 上游只承载 IKEv2 与 ESP；模组固件无需修改。此后端仍处于实验阶段，需要真实 SIM、运营商和 ePDG 联调验证。"))
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -323,7 +323,7 @@ private struct VoWiFiDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label(L10n.tr("VoWiFi 上游网络"), systemImage: "point.3.connected.trianglepath.dotted")
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Spacer()
                 Button(L10n.tr("管理代理")) { showingUpstreamManager = true }
                     .accessibilityIdentifier("VoWiFiManageUpstreamProxies")
@@ -336,7 +336,7 @@ private struct VoWiFiDetailView: View {
             }
             .accessibilityIdentifier("VoWiFiUpstreamRoute")
             Text(verbatim: L10n.tr("上游必须是支持 UDP ASSOCIATE 的 SOCKS5 代理；IKEv2 与 ESP 共用同一个 UDP 关联，以保持 ePDG 看到的 NAT 映射稳定。"))
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
             if controller.isRunningRequested(module.id) {
                 Button {
@@ -354,7 +354,7 @@ private struct VoWiFiDetailView: View {
     private func messageCard(_ text: String) -> some View {
         let color = VoWiFiStatusStyle.color(for: state)
         return Label(text, systemImage: "exclamationmark.triangle.fill")
-            .font(.callout)
+            .font(.appCallout)
             .foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
             .adaptiveGlassSurface(
@@ -371,7 +371,7 @@ private struct VoWiFiDetailView: View {
             Spacer()
             Text(verbatim: value).multilineTextAlignment(.trailing)
         }
-        .font(.callout)
+        .font(.appCallout)
     }
 
     private func readinessText(_ value: Bool?) -> String {

@@ -46,7 +46,7 @@ struct DialerView: View {
                 } icon: {
                     Image(systemName: "info.circle")
                 }
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .transition(.opacity)
@@ -63,18 +63,30 @@ struct DialerView: View {
 
     private func identityHeader(metrics: DialerMetrics) -> some View {
         VStack(spacing: metrics.compact ? 5 : 7) {
-            DialerAvatar(
-                title: avatarTitle,
-                color: .blue,
-                size: metrics.avatarSize
-            )
+            // The face of the number being dialled, in the colour and with the
+            // badge of the line the call will go out on.
+            if model.dialNumber.isEmpty {
+                DialerAvatar(
+                    title: nil,
+                    color: dialingLine.tint.solid,
+                    size: metrics.avatarSize
+                )
+            } else {
+                ContactFaceAvatar(
+                    address: model.dialNumber,
+                    size: metrics.avatarSize,
+                    tint: dialingLine.tint,
+                    badgeText: dialingLine.badgeText
+                )
+                .help(dialingLine.fullTitle)
+            }
 
             Text(verbatim: identityTitle)
-                .font(.system(size: metrics.compact ? 18 : 21, weight: .semibold))
+                .font(.appTitle)
                 .lineLimit(1)
 
             Text(verbatim: callAvailabilityText)
-                .font(.callout)
+                .font(.appCallout)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
@@ -91,11 +103,7 @@ struct DialerView: View {
                 }
             }
                 .textFieldStyle(.plain)
-                .font(.system(
-                    size: metrics.compact ? 20 : 24,
-                    weight: .medium,
-                    design: .rounded
-                ))
+                .font(metrics.compact ? .appTitle.weight(.medium) : .appDisplay.weight(.medium))
                 .monospacedDigit()
                 .multilineTextAlignment(.center)
                 .focused($numberFocused)
@@ -105,7 +113,7 @@ struct DialerView: View {
                 model.dialNumber = ""
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.appSymbol(.button))
                     .foregroundStyle(.secondary)
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
@@ -210,13 +218,10 @@ struct DialerView: View {
         )
     }
 
-    private var avatarTitle: String? {
-        guard let matchedContact else { return nil }
-        let identity = appState.privacyPresentation.identity(
-            contactName: matchedContact,
-            number: model.dialNumber
+    private var dialingLine: LineAppearance {
+        appState.lineAppearanceResolver.currentAppearance(
+            moduleID: appState.currentCommunicationModuleID
         )
-        return String(identity.prefix(1))
     }
 
     private var callAvailabilityText: String {
@@ -334,12 +339,12 @@ private struct DialerKeyButton: View {
         Button(action: action) {
             VStack(spacing: 0) {
                 Text(verbatim: digit)
-                    .font(.system(size: size * 0.39, weight: .medium, design: .rounded))
+                    .font(.system(size: size * 0.39, weight: .medium))
                 Text(verbatim: letters.isEmpty ? " " : letters)
-                    .font(.system(size: max(7, size * 0.13), weight: .semibold))
+                    .font(.system(size: max(10, size * 0.13), weight: .semibold))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
-                    .frame(height: max(8, size * 0.17))
+                    .frame(height: max(11, size * 0.17))
             }
         }
         .buttonStyle(DialerCircleButtonStyle(size: size))

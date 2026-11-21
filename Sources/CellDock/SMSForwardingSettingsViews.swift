@@ -25,7 +25,7 @@ private struct ForwardingTestButton: View {
                     Image(systemName: resultIsSuccess ? "checkmark.circle.fill" : "xmark.octagon.fill")
                         .foregroundStyle(resultIsSuccess ? .green : .red)
                     Text(resultMessage)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -62,7 +62,7 @@ private struct ForwardingSheetChrome<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text(title)
-                .font(.title3.bold())
+                .font(.appHeadline)
 
             content()
 
@@ -98,12 +98,12 @@ struct BarkForwardingConfigSheet: View {
         } content: {
             VStack(alignment: .leading, spacing: 10) {
                 Text(L10n.tr("推送地址"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 TextField("https://api.day.app/你的Key/", text: $serverURL)
                     .textFieldStyle(.roundedBorder)
                 Text(L10n.tr("从 Bark App 里复制包含设备 Key 的完整地址。"))
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
 
                 ForwardingTestButton(channel: .bark)
@@ -130,13 +130,13 @@ struct FeishuForwardingConfigSheet: View {
         } content: {
             VStack(alignment: .leading, spacing: 10) {
                 Text(L10n.tr("Webhook 地址"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 TextField("https://open.feishu.cn/open-apis/bot/v2/hook/...", text: $webhookURL)
                     .textFieldStyle(.roundedBorder)
 
                 Text(L10n.tr("签名密钥（可选）"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 SecureField(L10n.tr("开启了“签名校验”才需要填写"), text: $secret)
                     .textFieldStyle(.roundedBorder)
@@ -165,13 +165,13 @@ struct DingTalkForwardingConfigSheet: View {
         } content: {
             VStack(alignment: .leading, spacing: 10) {
                 Text(L10n.tr("Webhook AccessToken"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 TextField(L10n.tr("access_token 参数的值"), text: $accessToken)
                     .textFieldStyle(.roundedBorder)
 
                 Text(L10n.tr("签名密钥（可选）"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 SecureField(L10n.tr("开启了“加签”才需要填写"), text: $secret)
                     .textFieldStyle(.roundedBorder)

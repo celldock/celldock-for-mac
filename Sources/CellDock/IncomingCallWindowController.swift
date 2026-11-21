@@ -413,14 +413,14 @@ private struct CallIslandView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(displayName)
-                        .font(.headline.weight(.semibold))
+                        .font(.appBodyStrong)
                         .lineLimit(1)
                     if appState.call.phase == .active {
                         Circle().fill(.green).frame(width: 7, height: 7)
                     }
                 }
                 callDetail
-                    .font(.caption.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -453,22 +453,20 @@ private struct CallIslandView: View {
         }
     }
 
+    /// The caller's face, in the colour and with the badge of the line the
+    /// call is on.
     private var callerAvatar: some View {
-        ZStack {
-            Circle().fill(avatarTint.gradient)
-            if contacts.displayName(for: callNumber) == nil && !appState.isPresentationPrivacyEnabled {
-                Image(systemName: appState.call.direction == .incoming
-                    ? "phone.arrow.down.left.fill"
-                    : "phone.arrow.up.right.fill")
-                    .font(.system(size: 19, weight: .semibold))
-            } else {
-                Text(String(displayName.prefix(1)))
-                    .font(.system(size: 21, weight: .semibold))
-            }
-        }
-        .foregroundStyle(.white)
-        .frame(width: 44, height: 44)
-        .shadow(color: avatarTint.opacity(0.18), radius: 6, y: 2)
+        let line = appState.lineAppearanceResolver.currentAppearance(
+            moduleID: appState.call.moduleID
+        )
+        return ContactFaceAvatar(
+            address: appState.call.number ?? "",
+            size: 44,
+            tint: line.tint,
+            badgeText: line.badgeText
+        )
+        .shadow(color: line.tint.solid.opacity(0.18), radius: 6, y: 2)
+        .help(line.fullTitle)
     }
 
     private func islandActionButton(
@@ -534,10 +532,6 @@ private struct CallIslandView: View {
         .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
         .joined(separator: " · ")
-    }
-
-    private var avatarTint: Color {
-        appState.call.phase == .incoming ? .orange : .blue
     }
 
     private var canAnswer: Bool {

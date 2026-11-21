@@ -160,9 +160,9 @@ struct SIMManagementView: View {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("SIM 管理")
-                        .font(.title2.weight(.bold))
+                        .font(.appTitle)
                     Text(L10n.tr("%lld 个模组已连接", Int64(connectedModuleCount)))
-                        .font(.callout)
+                        .font(.appCallout)
                         .foregroundStyle(.secondary)
                 }
 
@@ -288,9 +288,9 @@ struct SIMManagementView: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: L10n.tr("蜂窝网络选择"))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(verbatim: L10n.tr("一个模组可设为蜂窝优先，多个模组可以保持连接。"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -314,9 +314,9 @@ struct SIMManagementView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: L10n.tr("实时网速"))
-                        .font(.callout.weight(.medium))
+                        .font(.appCalloutStrong)
                     Text(verbatim: L10n.tr("蜂窝网络开启后在菜单栏显示下载与上传速度"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -389,16 +389,16 @@ struct SIMManagementView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: "\(module.displayName) · \(module.carrierName)")
-                    .font(.callout.weight(.semibold))
+                    .font(.appCallout.weight(.semibold))
                     .lineLimit(1)
                 if let issue = appState.networkStatus(for: module.id).issue, issue.isWarning {
                     Label(issue.localizedTitle, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption.weight(.medium))
+                        .font(.appCaptionStrong)
                         .foregroundStyle(.orange)
                         .help(issue.localizedDetail)
                 } else {
                     Text(verbatim: internetModuleDetail(module))
-                        .font(.caption.monospacedDigit())
+                        .font(.appCaption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
@@ -447,11 +447,11 @@ struct SIMManagementView: View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(L10n.tr("%@ · %@", selectedModule?.displayName ?? L10n.tr("模组"), selectedModule?.carrierName ?? L10n.tr("运营商未识别")))
-                    .font(.title2.weight(.bold))
+                    .font(.appTitle)
                     .lineLimit(1)
 
                 Text(moduleHeaderSubtitle)
-                    .font(.callout.monospacedDigit())
+                    .font(.appCallout.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -502,7 +502,7 @@ struct SIMManagementView: View {
                     L10n.tr("命令目标：%@", selectedModule?.displayName ?? L10n.tr("当前模组")),
                     systemImage: "scope"
                 )
-                .font(.caption.weight(.medium))
+                .font(.appCaptionStrong)
                 .foregroundStyle(.secondary)
 
                 ATConsoleView(
@@ -645,7 +645,7 @@ struct SIMManagementView: View {
                         ? "exclamationmark.triangle.fill"
                         : "checkmark.circle.fill"
                 )
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(appState.transientIsError ? Color.red : Color.secondary)
                 .lineLimit(2)
             }
@@ -657,7 +657,7 @@ struct SIMManagementView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
                 Image(systemName: "simcard.2.fill")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.appSymbol(.rail, weight: .semibold))
                     .foregroundStyle(.blue)
                     .frame(width: 40, height: 40)
                     .background(Color.blue.opacity(0.10), in: Circle())
@@ -665,13 +665,13 @@ struct SIMManagementView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text("板载 eUICC")
-                            .font(.headline)
+                            .font(.appBodyStrong)
                         Text("已识别")
-                            .font(.caption2.weight(.semibold))
+                            .font(.appCaption.weight(.semibold))
                             .foregroundStyle(.green)
                     }
                     Text("通过 ISD-R 逻辑通道识别，可管理已安装的运营商套餐")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
 
@@ -687,10 +687,10 @@ struct SIMManagementView: View {
 
             HStack(spacing: 12) {
                 Text("EID")
-                    .font(.callout)
+                    .font(.appCallout)
                 Spacer()
                 Text(maskedIdentifier(selectedEUICC.eid, prefixCount: 6, suffixCount: 6))
-                    .font(.callout.monospacedDigit())
+                    .font(.appCallout.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 Button {
@@ -711,12 +711,12 @@ struct SIMManagementView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("eSIM 套餐")
-                        .font(.headline)
+                        .font(.appBodyStrong)
                     Text(L10n.tr(
                         "已安装 %lld 个套餐",
                         Int64(selectedEUICC.profiles.count)
                     ))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -733,12 +733,12 @@ struct SIMManagementView: View {
             if selectedEUICC.profiles.isEmpty {
                 VStack(spacing: 9) {
                     Image(systemName: "simcard")
-                        .font(.system(size: 26))
+                        .font(.appSymbol(.large, weight: .regular))
                         .foregroundStyle(.secondary)
                     Text("尚未安装 eSIM 套餐")
-                        .font(.callout.weight(.medium))
+                        .font(.appCalloutStrong)
                     Text("使用运营商提供的二维码或激活码添加套餐")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -758,7 +758,7 @@ struct SIMManagementView: View {
     private func esimProfileRow(_ profile: ESIMProfile) -> some View {
         HStack(spacing: 13) {
             Image(systemName: profile.isEnabled ? "antenna.radiowaves.left.and.right" : "simcard")
-                .font(.system(size: 16, weight: .medium))
+                .font(.appSymbol(.button))
                 .foregroundStyle(profile.isEnabled ? Color.green : Color.secondary)
                 .frame(width: 36, height: 36)
                 .background(
@@ -768,12 +768,12 @@ struct SIMManagementView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(profile.displayName)
-                    .font(.callout.weight(.semibold))
+                    .font(.appCallout.weight(.semibold))
                 Text(profile.serviceProviderName ?? L10n.tr("运营商信息未提供"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                 Text(maskedIdentifier(profile.iccid, prefixCount: 4, suffixCount: 4))
-                    .font(.caption2.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(.tertiary)
             }
 
@@ -784,19 +784,19 @@ struct SIMManagementView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text(switchingLabel)
-                        .font(.caption2.weight(.semibold))
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
             } else if profile.isEnabled {
                 Text("使用中")
-                    .font(.caption2.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
                     .background(Color.green.opacity(0.10), in: Capsule())
             } else {
                 Text("已停用")
-                    .font(.caption2.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
@@ -814,7 +814,7 @@ struct SIMManagementView: View {
                     .disabled(profile.isEnabled)
             } label: {
                 Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 16))
+                    .font(.appSymbol(.button, weight: .regular))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -852,12 +852,12 @@ struct SIMManagementView: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     Text("蜂窝连接")
-                        .font(.callout)
+                        .font(.appCallout)
                         .foregroundStyle(.secondary)
                     Text(networkStateText)
-                        .font(.title2.weight(.bold))
+                        .font(.appTitle)
                     Text(overviewConnectionDetail)
-                        .font(.callout.monospacedDigit())
+                        .font(.appCallout.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -886,7 +886,7 @@ struct SIMManagementView: View {
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("蜂窝网络模式")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
 
                 CellularNetworkModeMenu(
@@ -898,7 +898,7 @@ struct SIMManagementView: View {
                 .accessibilityIdentifier("SIMManagementOverviewCellularNetworkModeMenu")
 
                 Text(overviewCellularNetworkMode.localizedDetail)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
@@ -920,10 +920,10 @@ struct SIMManagementView: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("蜂窝连接")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     Text(overviewConnectionDetail)
-                        .font(.caption.monospacedDigit())
+                        .font(.appCaption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -933,7 +933,7 @@ struct SIMManagementView: View {
                 Spacer(minLength: 8)
 
                 Text(networkStateText)
-                    .font(.caption2.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(networkStateColor)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -961,7 +961,7 @@ struct SIMManagementView: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 10) {
                     Text("蜂窝网络模式")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
 
                     Spacer(minLength: 8)
@@ -976,7 +976,7 @@ struct SIMManagementView: View {
                 }
 
                 Text(overviewCellularNetworkMode.localizedDetail)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1010,11 +1010,11 @@ struct SIMManagementView: View {
     ) -> some View {
         HStack(spacing: 8) {
             Image(systemName: systemImage)
-                .font(.caption.weight(.bold))
+                .font(.appSymbol(.indicator, weight: .semibold))
                 .foregroundStyle(tint)
                 .frame(width: 16)
             Text(title.replacingOccurrences(of: systemImage == "arrow.down" ? "↓ " : "↑ ", with: ""))
-                .font(.callout.weight(.semibold).monospacedDigit())
+                .font(.appCallout.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.primary)
                 .lineLimit(1)
         }
@@ -1027,7 +1027,7 @@ struct SIMManagementView: View {
     private var overviewCommunicationCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Label("通信服务", systemImage: "antenna.radiowaves.left.and.right")
-                .font(.headline)
+                .font(.appBodyStrong)
                 .foregroundStyle(.primary)
                 .padding(.bottom, 10)
 
@@ -1039,10 +1039,10 @@ struct SIMManagementView: View {
                     .foregroundStyle(messageServiceColor)
                     .frame(width: 38, height: 38)
                     .background(messageServiceColor.opacity(0.10), in: Circle())
-                Text("短信服务").font(.headline)
+                Text("短信服务").font(.appBodyStrong)
                 Spacer()
                 Text(messageServiceText)
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(messageServiceColor)
             }
             .padding(.vertical, 12)
@@ -1051,7 +1051,7 @@ struct SIMManagementView: View {
                 L10n.tr("更改接收来电设置后将重启%@。", selectedModule?.displayName ?? L10n.tr("当前模组")),
                 systemImage: "info.circle"
             )
-            .font(.caption)
+            .font(.appCaption)
             .foregroundStyle(.blue)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -1066,7 +1066,7 @@ struct SIMManagementView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("SIM 卡", systemImage: "simcard.fill")
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Spacer()
                 Button("查看详情") { selection = .sim }
                     .buttonStyle(.borderless)
@@ -1078,9 +1078,9 @@ struct SIMManagementView: View {
             HStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selectedModule?.carrierName ?? L10n.tr("运营商未识别"))
-                        .font(.title3.weight(.semibold))
+                        .font(.appHeadline)
                     Text(displayedPhoneNumber)
-                        .font(.callout.monospacedDigit())
+                        .font(.appCallout.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
 
@@ -1099,7 +1099,7 @@ struct SIMManagementView: View {
 
     private func overviewTag(_ title: String) -> some View {
         Text(title)
-            .font(.caption.monospacedDigit())
+            .font(.appCaption.monospacedDigit())
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -1109,7 +1109,7 @@ struct SIMManagementView: View {
     private var overviewDeviceInformationCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("设备信息", systemImage: "info.circle")
-                .font(.headline)
+                .font(.appBodyStrong)
 
             HStack(spacing: 0) {
                 overviewDeviceMetric(
@@ -1150,13 +1150,13 @@ struct SIMManagementView: View {
     ) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .medium))
+                .font(.appSymbol(.button))
                 .foregroundStyle(.blue)
                 .frame(width: 24)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.medium))
+                Text(title).font(.appCalloutStrong)
                 Text(value)
-                    .font(.caption.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(valueColor)
                     .lineLimit(1)
             }
@@ -1203,7 +1203,7 @@ struct SIMManagementView: View {
     private var cellularServiceCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("蜂窝服务")
-                .font(.headline)
+                .font(.appBodyStrong)
                 .padding(.bottom, 12)
 
             Divider()
@@ -1215,7 +1215,7 @@ struct SIMManagementView: View {
                 L10n.tr("更改接收来电设置后将重启%@。", selectedModule?.displayName ?? L10n.tr("当前模组")),
                 systemImage: "info.circle"
             )
-            .font(.caption)
+            .font(.appCaption)
             .foregroundStyle(.blue)
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
@@ -1229,7 +1229,7 @@ struct SIMManagementView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("SIM 卡")
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Spacer()
                 Button("查看详情") { selection = .sim }
                     .buttonStyle(.borderless)
@@ -1262,10 +1262,10 @@ struct SIMManagementView: View {
     private func simQuickInformationColumn(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(L10n.tr(title))
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.callout.monospacedDigit())
+                .font(.appCallout.monospacedDigit())
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1283,7 +1283,7 @@ struct SIMManagementView: View {
     private var networkStatusRow: some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 18, weight: .medium))
+                .font(.appSymbol(.rail))
                 .foregroundStyle(networkStateColor)
                 .frame(width: 38, height: 38)
                 .background(networkStateColor.opacity(0.10), in: Circle())
@@ -1291,13 +1291,13 @@ struct SIMManagementView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text("蜂窝数据")
-                        .font(.headline)
+                        .font(.appBodyStrong)
                     Text(networkStateText)
-                        .font(.caption.weight(.semibold))
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(networkStateColor)
                 }
                 Text(networkDetailText)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -1308,7 +1308,7 @@ struct SIMManagementView: View {
                             ? "exclamationmark.triangle.fill"
                             : "info.circle"
                     )
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(issue.isWarning ? Color.orange : Color.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1327,7 +1327,7 @@ struct SIMManagementView: View {
     private var incomingCallsRow: some View {
         HStack(alignment: .center, spacing: 14) {
             Image(systemName: "phone.arrow.down.left")
-                .font(.system(size: 18, weight: .medium))
+                .font(.appSymbol(.rail))
                 .foregroundStyle(incomingCallStateColor)
                 .frame(width: 38, height: 38)
                 .background(incomingCallStateColor.opacity(0.10), in: Circle())
@@ -1335,22 +1335,22 @@ struct SIMManagementView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text("接收来电")
-                        .font(.headline)
+                        .font(.appBodyStrong)
 
                     Image(systemName: "info.circle")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.appSymbol(.inline))
                         .foregroundStyle(.secondary)
                         .help(incomingCallsHelpText)
                         .accessibilityLabel(L10n.tr("接收来电设置说明"))
                         .accessibilityHint(incomingCallsHelpText)
 
                     Text(incomingCallStateText)
-                        .font(.caption.weight(.semibold))
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(incomingCallStateColor)
                 }
 
                 Text(incomingCallDetail)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1424,9 +1424,9 @@ struct SIMManagementView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(simStateText)
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(connectionDetailText)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
@@ -1483,9 +1483,9 @@ struct SIMManagementView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.tr("卡槽"))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(L10n.tr("同一时间只有一张卡在线"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
             .padding(.bottom, 6)
@@ -1501,7 +1501,7 @@ struct SIMManagementView: View {
                     L10n.tr("切换期间蜂窝网络和短信会短暂中断。通话中或 eSIM 操作进行时不能切换。"),
                     systemImage: "info.circle"
                 )
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
@@ -1520,7 +1520,7 @@ struct SIMManagementView: View {
 
         return HStack(alignment: .center, spacing: 14) {
             Image(systemName: "simcard")
-                .font(.system(size: 18, weight: .medium))
+                .font(.appSymbol(.rail))
                 .foregroundStyle(tint)
                 .frame(width: 38, height: 38)
                 .background(tint.opacity(0.10), in: Circle())
@@ -1528,7 +1528,7 @@ struct SIMManagementView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
                     Text(L10n.tr("卡槽 %lld", Int64(slot)))
-                        .font(.headline)
+                        .font(.appBodyStrong)
                     if isActive {
                         ModuleRoleBadge(title: "使用中", tint: .green)
                     } else {
@@ -1537,25 +1537,25 @@ struct SIMManagementView: View {
                                 ? L10n.tr("切换中")
                                 : (isGoingOffline ? L10n.tr("已离线") : L10n.tr("未启用"))
                         )
-                        .font(.caption.weight(.semibold))
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(isSwitchTarget ? Color.blue : Color.secondary)
                     }
                 }
 
                 if isSwitchTarget {
                     Text(L10n.tr("正在重新读取 SIM 卡"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     Text(L10n.tr("大约需要 3 到 5 秒"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.tertiary)
                 } else if isActive {
                     Text(activeSIMSlotDetail)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 } else {
                     Text(L10n.tr("切换后读取这张卡的运营商和号码"))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1610,7 +1610,7 @@ struct SIMManagementView: View {
     private var identifierCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("SIM 标识")
-                .font(.headline)
+                .font(.appBodyStrong)
                 .padding(.bottom, 10)
 
             identifierRow(
@@ -1694,7 +1694,7 @@ struct SIMManagementView: View {
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
         }
-        .font(.callout)
+        .font(.appCallout)
         .padding(.vertical, 9)
     }
 
@@ -1705,12 +1705,12 @@ struct SIMManagementView: View {
     ) -> some View {
         HStack(spacing: 12) {
             Text(L10n.tr(title))
-                .font(.callout)
+                .font(.appCallout)
 
             Spacer()
 
             Text(maskedValue)
-                .font(.callout.monospacedDigit())
+                .font(.appCallout.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
@@ -2030,7 +2030,7 @@ private struct SIMModuleSidebarRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(moduleTitle)
-                        .font(.callout.weight(.semibold))
+                        .font(.appCallout.weight(.semibold))
                         .lineLimit(1)
                         .layoutPriority(1)
 
@@ -2043,7 +2043,7 @@ private struct SIMModuleSidebarRow: View {
                 }
 
                 Text(simIdentifierText)
-                    .font(.caption2.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
@@ -2127,7 +2127,7 @@ private struct ModuleRoleBadge: View {
 
     var body: some View {
         Text(localizesTitle ? L10n.tr(title) : title)
-            .font(.caption2.weight(.semibold))
+            .font(.appCaption.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)

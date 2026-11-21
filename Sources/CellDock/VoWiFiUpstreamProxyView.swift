@@ -72,9 +72,9 @@ struct VoWiFiUpstreamProxyManagerView: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: configuration.name.isEmpty ? configuration.endpointDescription : configuration.name)
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(verbatim: configuration.endpointDescription)
-                    .font(.caption.monospaced())
+                    .font(.appCaption.monospaced())
                     .foregroundStyle(.secondary)
                 probeLabel(configuration.id)
             }

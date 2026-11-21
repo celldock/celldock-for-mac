@@ -62,15 +62,15 @@ struct ATConsoleView: View {
     private var header: some View {
         HStack(spacing: 12) {
             Image(systemName: "terminal.fill")
-                .font(.title2)
+                .font(.appSymbol(.button, weight: .regular))
                 .foregroundStyle(.blue)
                 .frame(width: 38, height: 38)
                 .adaptiveGlassSurface(cornerRadius: 12, treatment: .clear)
             VStack(alignment: .leading, spacing: 2) {
                 Text("AT 控制台")
-                    .font(.title2.weight(.semibold))
+                    .font(.appTitle)
                 Text("通过当前模块的 interface 2 执行单行命令")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -81,7 +81,7 @@ struct ATConsoleView: View {
                     .fill(targetModem.isConnected ? Color.green : Color.red)
                     .frame(width: 8, height: 8)
                 Text(targetModem.isConnected ? L10n.tr("所选模组已连接") : L10n.tr("所选模组未连接"))
-                    .font(.caption.weight(.medium))
+                    .font(.appCaptionStrong)
             }
             if !embedded {
                 Button {
@@ -103,7 +103,7 @@ struct ATConsoleView: View {
             HStack(spacing: 10) {
                 TextField("例如 AT+QCSQ", text: $command)
                     .textFieldStyle(.roundedBorder)
-                    .font(.body.monospaced())
+                    .font(.appBody.monospaced())
                     .frame(minWidth: 0)
                     .focused($commandFocused)
                     .onSubmit { execute() }
@@ -127,7 +127,7 @@ struct ATConsoleView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 7) {
                     Text("常用")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     ForEach(suggestions, id: \.self) { suggestion in
                         Button(suggestion) {
@@ -137,7 +137,7 @@ struct ATConsoleView: View {
                         }
                         .adaptiveGlassButton()
                         .controlSize(.small)
-                        .font(.caption.monospaced())
+                        .font(.appCaption.monospaced())
                     }
                 }
                 .padding(.horizontal, 5)
@@ -146,12 +146,12 @@ struct ATConsoleView: View {
 
             if let localError {
                 Label(localError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             } else if appState.moduleHasCall(targetModuleID) {
                 Label("通话期间暂停手动 AT，避免改变通话和音频状态。", systemImage: "phone.fill")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.orange)
             }
         }
@@ -162,7 +162,7 @@ struct ATConsoleView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Label("执行记录", systemImage: "text.alignleft")
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Spacer()
                 if !results.isEmpty {
                     Button("清空") { results.removeAll() }
@@ -174,10 +174,10 @@ struct ATConsoleView: View {
             if results.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "terminal")
-                        .font(.title2)
+                        .font(.appSymbol(.button, weight: .regular))
                         .foregroundStyle(.tertiary)
                     Text("尚未执行命令")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -203,16 +203,16 @@ struct ATConsoleView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text("> \(result.command)")
-                    .font(.subheadline.monospaced().weight(.semibold))
+                    .font(.appCaption.monospaced().weight(.semibold))
                     .textSelection(.enabled)
                 Spacer()
                 Circle()
                     .fill(result.isSuccess ? Color.green : Color.red)
                     .frame(width: 7, height: 7)
                 Text(result.isSuccess ? L10n.tr("完成") : L10n.tr("失败"))
-                    .font(.caption.weight(.medium))
+                    .font(.appCaptionStrong)
                 Text("\(result.elapsedMilliseconds) ms")
-                    .font(.caption2.monospacedDigit())
+                    .font(.appCaption.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Button {
                     copy(result)
@@ -225,7 +225,7 @@ struct ATConsoleView: View {
             }
 
             Text(result.output.isEmpty ? L10n.tr("（模块没有返回文本）") : result.output)
-                .font(.system(.caption, design: .monospaced))
+                .font(.appMono)
                 .foregroundStyle(result.isSuccess ? Color.primary : Color.red)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -233,7 +233,7 @@ struct ATConsoleView: View {
             if let error = result.error,
                !result.output.localizedCaseInsensitiveContains(error) {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
@@ -249,7 +249,7 @@ struct ATConsoleView: View {
     private var footer: some View {
         HStack {
             Label("命令直接作用于模块，不自动重试；不支持需要 > 载荷的数据命令。", systemImage: "exclamationmark.shield")
-                .font(.caption2)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)

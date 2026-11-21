@@ -140,7 +140,7 @@ struct CellularOverviewCard: View {
 
                     HStack(spacing: 8) {
                         Text(signalSummary)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.82)
@@ -156,16 +156,16 @@ struct CellularOverviewCard: View {
 
             HStack(alignment: .center, spacing: 9) {
                 Image(systemName: simStateIcon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.appSymbol(.small))
                     .foregroundStyle(simStateColor)
                     .frame(width: 22, height: 22)
                     .background(simStateColor.opacity(0.10), in: Circle())
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(simStatusText)
-                        .font(.caption.weight(.medium))
+                        .font(.appCaptionStrong)
                     Text(simDetailText)
-                        .font(.caption2.monospacedDigit())
+                        .font(.appCaption.monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -174,7 +174,7 @@ struct CellularOverviewCard: View {
 
                 if showsNetworkControls && displayedNetworkMode.isEnabled {
                     Label(networkStateLabel, systemImage: networkStateIcon)
-                        .font(.caption2.weight(.semibold))
+                        .font(.appCaption.weight(.semibold))
                         .foregroundStyle(networkStateColor)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -189,12 +189,12 @@ struct CellularOverviewCard: View {
     private var cardTitleView: some View {
         if let displayedModule {
             Text("\(displayedModule.displayName) · \(operatorName)")
-                .font(.headline)
+                .font(.appBodyStrong)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         } else {
             Text(operatorName)
-                .font(.headline)
+                .font(.appBodyStrong)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
@@ -206,7 +206,7 @@ struct CellularOverviewCard: View {
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
             Text(statusText)
-                .font(.caption.weight(.semibold))
+                .font(.appCaption.weight(.semibold))
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -218,7 +218,7 @@ struct CellularOverviewCard: View {
         if let resolvedModuleID {
             HStack(spacing: 6) {
                 Text("蜂窝网络")
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
 
                 CellularNetworkModeMenu(
@@ -238,10 +238,10 @@ struct CellularOverviewCard: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Label("蜂窝数据详情", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                 Spacer()
                 Text(networkStateLabel)
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(networkStateColor)
             }
 
@@ -278,7 +278,7 @@ struct CellularOverviewCard: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("正在重新协商 ECM 链路与 DHCP 地址")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     Spacer()
                 }
@@ -293,10 +293,10 @@ struct CellularOverviewCard: View {
                         .foregroundStyle(.orange)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: displayedNetwork.issue?.localizedTitle ?? "")
-                            .font(.caption.weight(.semibold))
+                            .font(.appCaption.weight(.semibold))
                             .foregroundStyle(.orange)
                         Text(verbatim: displayedNetwork.issue?.localizedDetail ?? "")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -312,7 +312,7 @@ struct CellularOverviewCard: View {
                     Image(systemName: "arrow.triangle.swap")
                         .foregroundStyle(.orange)
                     Text(L10n.tr("蜂窝网络已开启，但%@目前仍然优先", higherPriorityNetworkName))
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 6)
                     Button("让蜂窝优先") {
@@ -334,9 +334,9 @@ struct CellularOverviewCard: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(L10n.tr("当前 usbnet=%@", displayedModem.usbNetMode.map(String.init) ?? L10n.tr("未知")))
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                 Text("macOS 联网需要 CDC‑ECM（usbnet=1）")
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
@@ -416,10 +416,10 @@ struct CellularOverviewCard: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.caption.weight(.medium))
+                    .font(.appCaptionStrong)
                     .lineLimit(1)
                 Text(detail)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -832,7 +832,7 @@ private struct CellularOverviewActionButton: View {
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.caption.weight(.medium))
+                .font(.appCaptionStrong)
                 .frame(maxWidth: .infinity)
         }
         .adaptiveGlassButton()

@@ -79,7 +79,7 @@ struct MenuBarHubView: View {
 
                 if appState.isPresentationPrivacyEnabled {
                     Label(L10n.tr("演示隐私保护已开启"), systemImage: "checkmark.shield.fill")
-                        .font(.caption.weight(.medium))
+                        .font(.appCaptionStrong)
                         .foregroundStyle(.green)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 8)
@@ -94,7 +94,7 @@ struct MenuBarHubView: View {
                             ? "exclamationmark.triangle.fill"
                             : "checkmark.circle.fill")
                     }
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(appState.transientIsError ? Color.red : Color.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 8)
@@ -164,7 +164,7 @@ struct MenuBarHubView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.appSymbol(.button, weight: .semibold))
                 .frame(maxWidth: .infinity, minHeight: 31)
                 .adaptiveConcentricGlassSurface(
                     minimumCornerRadius: 16,
@@ -222,21 +222,21 @@ private struct MenuHubAction: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.appSymbol(.button, weight: .semibold))
                     .foregroundStyle(.primary)
                     .frame(width: 26)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: title)
-                        .font(.body.weight(.medium))
+                        .font(.appBody.weight(.medium))
                     Text(verbatim: detail)
-                        .font(.caption2)
+                        .font(.appCaption)
                         .foregroundStyle(highlightsDetail ? Color.red : Color.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 2)
                 if attentionCount > 0 {
                     Text(attentionCount > 99 ? "99+" : "\(attentionCount)")
-                        .font(.caption2.bold().monospacedDigit())
+                        .font(.appCaption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)

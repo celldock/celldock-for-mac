@@ -15,40 +15,40 @@ struct AddESIMProfileSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
                 Image(systemName: "qrcode.viewfinder")
-                    .font(.system(size: 21, weight: .semibold))
+                    .font(.appSymbol(.rail, weight: .semibold))
                     .foregroundStyle(.blue)
                     .frame(width: 42, height: 42)
                     .background(Color.blue.opacity(0.10), in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
                     Text("添加 eSIM")
-                        .font(.title3.weight(.semibold))
+                        .font(.appHeadline)
                     Text("导入运营商二维码，或粘贴 LPA 激活码")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
             }
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("激活码")
-                    .font(.callout.weight(.medium))
+                    .font(.appCalloutStrong)
                 SecureField("LPA:1$sm-dp-plus.example$MATCHING-ID", text: $activationCode)
                     .textFieldStyle(.roundedBorder)
                     .focused($codeFocused)
                 Text("激活码仅用于本次下载，不会保存到磁盘或日志。")
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 7) {
                 Text("确认码（可选）")
-                    .font(.callout.weight(.medium))
+                    .font(.appCalloutStrong)
                 SecureField("运营商要求时填写", text: $confirmationCode)
                     .textFieldStyle(.roundedBorder)
             }
 
             if let localError {
                 Label(localError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.red)
             }
 
@@ -139,7 +139,7 @@ struct RenameESIMProfileSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("重命名 eSIM 套餐")
-                .font(.title3.weight(.semibold))
+                .font(.appHeadline)
             TextField("套餐名称", text: $nickname)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)

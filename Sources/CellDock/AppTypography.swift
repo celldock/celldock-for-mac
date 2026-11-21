@@ -5,6 +5,9 @@ import SwiftUI
 /// Every text style in CellDock comes from these eight tokens so sizes and
 /// weights stay consistent between pages. Only three weights are used
 /// (regular, medium, semibold), and no text is smaller than 10 pt.
+///
+/// The one exception is text that scales with its control, such as the digits
+/// on a dial-pad key: those derive their size from the key instead.
 extension Font {
     /// 26 pt semibold: dial-pad number, call timer.
     static let appDisplay = Font.system(size: 26, weight: .semibold)
@@ -39,7 +42,8 @@ extension Font {
     /// 12 pt monospaced: AT console, IMEI, ICCID, file names.
     static let appMono = Font.system(size: 12, design: .monospaced)
 
-    /// A symbol size from the icon scale: 12 inline, 16 in buttons, 20 in the rail.
+    /// An SF Symbol size from the icon scale. Symbols are sized with fonts,
+    /// so they get their own seven steps instead of borrowing text styles.
     static func appSymbol(_ size: AppMetrics.SymbolSize, weight: Font.Weight = .medium) -> Font {
         .system(size: size.rawValue, weight: weight)
     }
@@ -48,9 +52,20 @@ extension Font {
 /// Shared sizes for avatars, rows, controls, corner radii and spacing.
 enum AppMetrics {
     enum SymbolSize: CGFloat {
+        /// Chevrons, direction arrows and other marks beside text.
+        case indicator = 10
+        /// Icons inside a line of text.
         case inline = 12
+        /// Icons in compact rows and small buttons.
+        case small = 14
+        /// Icons in regular buttons.
         case button = 16
+        /// The window rail and feature icons.
         case rail = 20
+        /// Icons that head a card or sheet.
+        case large = 24
+        /// Empty states and placeholders.
+        case hero = 32
     }
 
     /// Avatar diameters. Line badges only appear from `row` upwards.

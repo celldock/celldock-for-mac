@@ -136,7 +136,7 @@ struct CellDockSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text(L10n.tr("设置"))
-                        .font(.title2.bold())
+                        .font(.appTitle)
                         .padding(.horizontal, 14)
 
                     settingsSidebarGroup(
@@ -154,7 +154,7 @@ struct CellDockSettingsView: View {
             .communicationSidebarScrollEdgeEffect()
 
             Text(verbatim: "CellDock · \(updaterManager.currentVersion)")
-                .font(.caption2)
+                .font(.appCaption)
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 16)
@@ -172,7 +172,7 @@ struct CellDockSettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(title)
-                .font(.caption.weight(.medium))
+                .font(.appCaptionStrong)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
 
@@ -192,16 +192,16 @@ struct CellDockSettingsView: View {
         } label: {
             HStack(spacing: 11) {
                 Image(systemName: category.systemImage)
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.appSymbol(.button))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .frame(width: 24)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(category.title)
-                        .font(.body.weight(isSelected ? .semibold : .regular))
+                        .font(.appBody.weight(isSelected ? .semibold : .regular))
                         .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                     Text(category.sidebarDetail)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -214,7 +214,7 @@ struct CellDockSettingsView: View {
                 }
 
                 Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold))
+                    .font(.appSymbol(.indicator, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 12)
@@ -281,9 +281,9 @@ struct CellDockSettingsView: View {
     private var settingsHeader: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(selectedCategory.title)
-                .font(.largeTitle.bold())
+                .font(.appDisplay)
             Text(selectedCategory.detail)
-                .font(.body)
+                .font(.appBody)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -598,7 +598,7 @@ struct CellDockSettingsView: View {
     private var moduleStatusStrip: some View {
         HStack(spacing: 14) {
             Text(cellularSummary)
-                .font(.callout.weight(.medium))
+                .font(.appCalloutStrong)
                 .lineLimit(1)
 
             Spacer(minLength: 12)
@@ -608,7 +608,7 @@ struct CellDockSettingsView: View {
                     .fill(moduleStatusColor)
                     .frame(width: 8, height: 8)
                 Text(moduleStatusText)
-                    .font(.caption.weight(.semibold))
+                    .font(.appCaption.weight(.semibold))
                     .foregroundStyle(moduleStatusColor)
             }
         }
@@ -712,7 +712,7 @@ struct CellDockSettingsView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.headline)
+                .font(.appBodyStrong)
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
                 .padding(.bottom, 12)
@@ -737,17 +737,17 @@ struct CellDockSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(title)
-                        .font(.headline)
+                        .font(.appBodyStrong)
                         .lineLimit(1)
                     if let status {
                         Text(status)
-                            .font(.caption.weight(.semibold))
+                            .font(.appCaption.weight(.semibold))
                             .foregroundStyle(statusColor)
                     }
                 }
                 if let detail {
                     Text(detail)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -767,7 +767,7 @@ struct CellDockSettingsView: View {
             Text(text).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .font(.caption)
+        .font(.appCaption)
         .foregroundStyle(color)
     }
 

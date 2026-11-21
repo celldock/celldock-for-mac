@@ -51,7 +51,7 @@ struct CompactCallContent: View {
     private var header: some View {
         HStack {
             Label(L10n.tr("电话"), systemImage: "phone.fill")
-                .font(.subheadline.weight(.semibold))
+                .font(.appCaption.weight(.semibold))
 
             Spacer()
 
@@ -60,7 +60,7 @@ struct CompactCallContent: View {
                     .controlSize(.small)
             } else {
                 Text(verbatim: callPhaseText)
-                    .font(.caption.weight(.medium))
+                    .font(.appCaptionStrong)
                     .foregroundStyle(callPhaseColor)
             }
         }
@@ -95,7 +95,7 @@ struct CompactCallContent: View {
                     }
                 }
                     .textFieldStyle(.plain)
-                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .font(.appTitle)
                     .multilineTextAlignment(.center)
                     .onSubmit(dialIfPossible)
                     .padding(.horizontal, 32)
@@ -103,7 +103,7 @@ struct CompactCallContent: View {
                         if !dialNumber.isEmpty {
                             Button(action: deleteLastDialCharacter) {
                                 Image(systemName: "delete.left")
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(.appSymbol(.small))
                                     .foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
@@ -114,7 +114,7 @@ struct CompactCallContent: View {
                     .accessibilityIdentifier("MenuBarDialNumberField")
 
                 Text(verbatim: presentedMatchedContact ?? callAvailabilityDetail)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .frame(height: 14)
@@ -152,7 +152,7 @@ struct CompactCallContent: View {
 
             if let reason = appState.call.lastEndReason {
                 Text(verbatim: reason.localizedDescription)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -163,9 +163,9 @@ struct CompactCallContent: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: currentCallDisplayName(fallback: L10n.tr("未知号码")))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(L10n.tr("蜂窝来电"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
@@ -194,9 +194,9 @@ struct CompactCallContent: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: currentCallDisplayName(fallback: L10n.tr("正在拨号")))
-                    .font(.headline)
+                    .font(.appBodyStrong)
                 Text(appState.call.phase == .alerting ? L10n.tr("对方正在响铃") : L10n.tr("正在建立通话"))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
@@ -215,10 +215,10 @@ struct CompactCallContent: View {
         VStack(spacing: 14) {
             VStack(spacing: 3) {
                 Text(verbatim: currentCallDisplayName(fallback: L10n.tr("通话中")))
-                    .font(.title3.weight(.semibold))
+                    .font(.appHeadline)
                 if let startedAt = appState.call.startedAt {
                     Text(startedAt, style: .timer)
-                        .font(.caption.monospacedDigit())
+                        .font(.appCaption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
             }
@@ -310,7 +310,7 @@ struct CompactCallContent: View {
                 Text(startedAt, style: .timer)
                     .monospacedDigit()
             }
-            .font(.caption.weight(.medium))
+            .font(.appCaptionStrong)
             .foregroundStyle(.red)
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("MenuBarCallRecordingStatus")
@@ -326,7 +326,7 @@ struct CompactCallContent: View {
             } icon: {
                 Image(systemName: "exclamationmark.triangle.fill")
             }
-                .font(.caption2)
+                .font(.appCaption)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -339,7 +339,7 @@ struct CompactCallContent: View {
             Text(appState.call.phase == .recovering
                 ? L10n.tr("正在核对通话状态…")
                 : L10n.tr("正在结束通话…"))
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
 
             Spacer()
@@ -363,7 +363,7 @@ struct CompactCallContent: View {
                 Text(verbatim: appState.call.lastError ?? (appState.activeCallModemSnapshot.isConnected
                     ? L10n.tr("模块未报告 USB 语音能力")
                     : L10n.tr("插入模块后可使用蜂窝电话")))
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
 
@@ -535,7 +535,7 @@ private struct CompactDTMFReadout: View {
                         Text(verbatim: digits)
                     }
                 }
-                    .font(digits.isEmpty ? .caption : .title3.monospaced().weight(.medium))
+                    .font(digits.isEmpty ? .appCaption : .appHeadline.monospaced().weight(.medium))
                     .foregroundStyle(digits.isEmpty ? Color.secondary : Color.primary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
@@ -580,9 +580,9 @@ private struct CompactCallKeypad: View {
                 } label: {
                     VStack(spacing: 0) {
                         Text(verbatim: key.tone)
-                            .font(.title3.monospaced().weight(.semibold))
+                            .font(.appHeadline.monospaced())
                         Text(verbatim: key.letters.isEmpty ? " " : key.letters)
-                            .font(.system(size: 7, weight: .semibold))
+                            .font(.appMicro)
                             .tracking(1)
                             .foregroundStyle(.secondary)
                     }
@@ -644,7 +644,7 @@ private struct CompactCallControlButton: View {
             VStack(spacing: 5) {
                 controlIcon
                 Text(verbatim: title)
-                    .font(.caption2)
+                    .font(.appCaption)
                     .foregroundStyle(.secondary)
             }
         }
@@ -657,7 +657,7 @@ private struct CompactCallControlButton: View {
     @ViewBuilder
     private var controlIcon: some View {
         let icon = Image(systemName: systemImage)
-            .font(.system(size: 16, weight: .semibold))
+            .font(.appSymbol(.button, weight: .semibold))
             .frame(width: 38, height: 38)
 
         if #available(macOS 26.0, *) {
