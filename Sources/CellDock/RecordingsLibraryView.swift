@@ -12,6 +12,7 @@ struct RecordingsLibraryView: View {
 
     @State private var searchText = ""
     @State private var directionFilter = 0
+    @State private var lineFilter: CommunicationLine?
     @State private var deletingRecording: CallRecordingRecord?
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -71,8 +72,13 @@ struct RecordingsLibraryView: View {
     }
 
     private var recordingList: some View {
-        VStack(spacing: 0) {
+        let resolver = appState.lineAppearanceResolver
+        let filterLines = self.filterLines(resolver: resolver)
+        let visible = filteredRecordingRecords(availableLines: filterLines)
+
+        return VStack(spacing: 0) {
             TextField("搜索录音、联系人或号码", text: $searchText)
+                .font(.appCallout)
                 .communicationSearchField()
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
@@ -82,10 +88,15 @@ struct RecordingsLibraryView: View {
                 selection: $directionFilter
             )
             .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
 
-            List(filteredRecordingRecords) { record in
-                recordingRow(record)
+            if filterLines.count > 1 {
+                LineFilterBar(lines: filterLines, selection: $lineFilter)
+                    .padding(.bottom, 10)
+            }
+
+            List(visible) { record in
+                recordingRow(record, line: resolver.appearance(for: line(of: record)))
                     .communicationSelectionHighlight(selectedRecordingID == record.id)
                     .contentShape(Rectangle())
                     .onTapGesture { selectedRecordingID = record.id }
@@ -119,48 +130,41 @@ struct RecordingsLibraryView: View {
         .communicationModuleFloatingSidebar()
     }
 
-    private func recordingRow(_ record: CallRecordingRecord) -> some View {
-        HStack(spacing: 11) {
-            RecordingDirectionBadge(
-                direction: record.direction,
-                size: 38,
-                iconSize: 16
-            )
+    private func recordingRow(_ record: CallRecordingRecord, line: LineAppearance) -> some View {
+        let isActive = recordings.playingRecordingID == record.id
+        return RecordingRowContent(
+            title: displayName(for: record),
+            address: record.number,
+            detail: recordingDuration(record.duration),
+            direction: record.direction,
+            timestamp: CommunicationUI.listTimestamp(record.startedAt),
+            isIncomplete: record.isIncomplete,
+            playbackSymbol: isActive
+                ? (recordings.isPlaybackPlaying ? "waveform" : "play.fill")
+                : nil,
+            line: line
+        )
+    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(displayName(for: record))
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-
-                HStack(spacing: 5) {
-                    if recordings.playingRecordingID == record.id {
-                        Image(systemName: recordings.isPlaybackPlaying ? "waveform" : "play.fill")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                    }
-
-                    Text(recordingDuration(record.duration))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer(minLength: 6)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(CommunicationUI.listTimestamp(record.startedAt))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: true, vertical: false)
-                if record.isIncomplete {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .help(L10n.tr("录音过程中部分音频未能写入"))
-                }
-            }
+    /// The line a recording was made on. Recordings made before lines were
+    /// stored with them fall back to their call-history record.
+    private func line(of record: CallRecordingRecord) -> CommunicationLine? {
+        if let moduleID = record.moduleID {
+            return CommunicationLine(moduleID: moduleID, simSlot: record.simSlot)
         }
-        .padding(.vertical, 5)
+        return appState.callHistory.records.first {
+            $0.recordingID == record.id || (record.callID != nil && $0.id == record.callID)
+        }?.line
+    }
+
+    /// Every line that carried a recorded call, ordered by module and SIM slot.
+    private func filterLines(resolver: LineAppearanceResolver) -> [LineAppearance] {
+        var seen = Set<CommunicationLine>()
+        return recordings.records
+            .compactMap { line(of: $0) }
+            .filter { seen.insert($0).inserted }
+            .map { resolver.appearance(for: $0) }
+            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
     }
 
     @ViewBuilder
@@ -169,6 +173,7 @@ struct RecordingsLibraryView: View {
             RecordingDetailPane(
                 record: record,
                 displayName: displayName(for: record),
+                line: appState.lineAppearanceResolver.appearance(for: line(of: record)),
                 waveform: waveform,
                 waveformError: waveformError,
                 recordings: recordings,
@@ -191,8 +196,18 @@ struct RecordingsLibraryView: View {
     }
 
     private var filteredRecordingRecords: [CallRecordingRecord] {
+        filteredRecordingRecords(
+            availableLines: filterLines(resolver: appState.lineAppearanceResolver)
+        )
+    }
+
+    private func filteredRecordingRecords(
+        availableLines: [LineAppearance]
+    ) -> [CallRecordingRecord] {
+        let activeFilter = availableLines.contains { $0.line == lineFilter } ? lineFilter : nil
         let directional = recordings.records.filter { record in
-            directionFilter == 0 ||
+            if let activeFilter, line(of: record) != activeFilter { return false }
+            return directionFilter == 0 ||
                 (directionFilter == 1 && record.direction == .incoming) ||
                 (directionFilter == 2 && record.direction == .outgoing)
         }
@@ -280,39 +295,11 @@ struct RecordingsLibraryView: View {
 
 }
 
-private struct RecordingDirectionBadge: View {
-    let direction: CallDirection
-    let size: CGFloat
-    let iconSize: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(directionColor.opacity(0.14))
-
-            Image(systemName: directionIcon)
-                .font(.system(size: iconSize, weight: .semibold))
-                .foregroundStyle(directionColor)
-        }
-        .frame(width: size, height: size)
-        .accessibilityLabel(
-            direction == .incoming ? L10n.tr("呼入录音") : L10n.tr("呼出录音")
-        )
-    }
-
-    private var directionIcon: String {
-        direction == .incoming ? "phone.arrow.down.left" : "phone.arrow.up.right"
-    }
-
-    private var directionColor: Color {
-        direction == .incoming ? .blue : .green
-    }
-}
-
 private struct RecordingDetailPane: View {
     @EnvironmentObject private var appState: AppState
     let record: CallRecordingRecord
     let displayName: String
+    let line: LineAppearance
     let waveform: CallRecordingWaveformData?
     let waveformError: String?
     @ObservedObject var recordings: CallRecordingStore
@@ -338,6 +325,7 @@ private struct RecordingDetailPane: View {
 
                     RecordingInformationCard(
                         record: record,
+                        line: line,
                         fileURL: recordings.fileURL(for: record)
                     )
 
@@ -345,7 +333,7 @@ private struct RecordingDetailPane: View {
 
                     if let error = recordings.lastError {
                         Label(L10n.tr(error), systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.red)
                     }
                 }
@@ -375,23 +363,27 @@ private struct RecordingDetailPane: View {
     }
 
     private var identity: some View {
-        HStack(spacing: 13) {
-            RecordingDirectionBadge(
-                direction: record.direction,
-                size: 54,
-                iconSize: 22
+        HStack(spacing: 16) {
+            ContactFaceAvatar(
+                address: record.number,
+                size: AppMetrics.Avatar.large,
+                tint: line.tint,
+                badgeText: line.badgeText
             )
+            .help(line.fullTitle)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(displayName)
-                    .font(.title3.weight(.semibold))
+                    .font(.appTitle)
                     .lineLimit(1)
                 Text(appState.privacyPresentation.phoneNumber(record.number))
-                    .font(.callout.monospacedDigit())
+                    .font(.appCallout)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                 Text(headerMetadata)
-                    .font(.caption)
+                    .font(.appCaption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
@@ -498,7 +490,8 @@ private struct RecordingPlayerCard: View {
                 Text(recordingDuration(duration))
                     .frame(width: 50, alignment: .trailing)
             }
-            .font(.caption.monospacedDigit())
+            .font(.appCaption)
+            .monospacedDigit()
             .foregroundStyle(.secondary)
 
             playbackControls
@@ -526,9 +519,9 @@ private struct RecordingPlayerCard: View {
         } else if let waveformError {
             VStack(spacing: 8) {
                 Image(systemName: "waveform.slash")
-                    .font(.title2)
+                    .font(.appSymbol(.rail))
                 Text(waveformError)
-                    .font(.caption)
+                    .font(.appCallout)
             }
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, minHeight: 184)
@@ -537,7 +530,7 @@ private struct RecordingPlayerCard: View {
                 ProgressView()
                     .controlSize(.small)
                 Text("正在生成声纹…")
-                    .font(.caption)
+                    .font(.appCallout)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, minHeight: 184)
@@ -551,7 +544,7 @@ private struct RecordingPlayerCard: View {
                 recordings.skipPlayback(by: -15)
             } label: {
                 Image(systemName: "gobackward.15")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.appSymbol(.button))
                     .frame(width: playbackControlSize, height: playbackControlSize)
             }
             .adaptiveGlassButton()
@@ -562,7 +555,7 @@ private struct RecordingPlayerCard: View {
                 recordings.play(record)
             } label: {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.appSymbol(.button, weight: .semibold))
                     .frame(width: playbackControlSize, height: playbackControlSize)
             }
             .adaptiveGlassButton(.accented)
@@ -574,7 +567,7 @@ private struct RecordingPlayerCard: View {
                 recordings.skipPlayback(by: 15)
             } label: {
                 Image(systemName: "goforward.15")
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.appSymbol(.button))
                     .frame(width: playbackControlSize, height: playbackControlSize)
             }
             .adaptiveGlassButton()
@@ -585,7 +578,8 @@ private struct RecordingPlayerCard: View {
                 recordings.setPlaybackRate(nextPlaybackRate)
             } label: {
                 Text(playbackRateLabel)
-                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .font(.appCaption.weight(.semibold))
+                    .monospacedDigit()
                     .frame(width: playbackControlSize, height: playbackControlSize)
             }
             .adaptiveGlassButton()
@@ -596,7 +590,7 @@ private struct RecordingPlayerCard: View {
                 showsVolume.toggle()
             } label: {
                 Image(systemName: volumeIcon)
-                    .font(.system(size: 16, weight: .medium))
+                    .font(.appSymbol(.button))
                     .frame(width: playbackControlSize, height: playbackControlSize)
             }
             .adaptiveGlassButton()
@@ -696,12 +690,12 @@ private struct RecordingWaveformView: View {
                 let laneHeight = (size.height - topInset) * 0.32
 
                 context.draw(
-                    Text("对方").font(.caption).foregroundStyle(.secondary),
+                    Text("对方").font(.appCaption).foregroundStyle(.secondary),
                     at: CGPoint(x: 0, y: remoteY),
                     anchor: .leading
                 )
                 context.draw(
-                    Text("本机").font(.caption).foregroundStyle(.secondary),
+                    Text("本机").font(.appCaption).foregroundStyle(.secondary),
                     at: CGPoint(x: 0, y: localY),
                     anchor: .leading
                 )
@@ -738,7 +732,7 @@ private struct RecordingWaveformView: View {
 
                 let timestamp = context.resolve(
                     Text(recordingDuration(currentTime))
-                        .font(.caption2.weight(.semibold).monospacedDigit())
+                        .font(.appMicro.monospacedDigit())
                         .foregroundStyle(.blue)
                 )
                 let textSize = timestamp.measure(in: CGSize(width: 80, height: 18))
@@ -834,6 +828,7 @@ private struct RecordingWaveformView: View {
 
 private struct RecordingInformationCard: View {
     let record: CallRecordingRecord
+    let line: LineAppearance
     let fileURL: URL
 
     var body: some View {
@@ -862,12 +857,19 @@ private struct RecordingInformationCard: View {
     private var recordingInformation: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("录音信息")
-                .font(.headline)
+                .font(.appHeadline)
             informationRow("录制时间", value: formattedDate)
             informationRow(
                 "通话方向",
                 value: record.direction == .incoming ? L10n.tr("呼入") : L10n.tr("呼出")
             )
+            HStack(alignment: .center, spacing: 12) {
+                Text(L10n.tr("线路"))
+                    .font(.appCallout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                LineFieldValue(appearance: line)
+            }
             informationRow("文件大小", value: fileSize)
         }
     }
@@ -875,11 +877,11 @@ private struct RecordingInformationCard: View {
     private var channelInformation: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("声道")
-                .font(.headline)
+                .font(.appHeadline)
             channelRow(color: .blue, title: "对方", value: L10n.tr("左声道"))
             channelRow(color: .indigo, title: "本机", value: L10n.tr("右声道"))
             Label("仅保存在这台 Mac", systemImage: "internaldrive")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundStyle(.secondary)
         }
     }
@@ -891,8 +893,9 @@ private struct RecordingInformationCard: View {
             Spacer()
             Text(value)
                 .multilineTextAlignment(.trailing)
+                .monospacedDigit()
         }
-        .font(.caption)
+        .font(.appCallout)
     }
 
     private func channelRow(color: Color, title: String, value: String) -> some View {
@@ -902,7 +905,7 @@ private struct RecordingInformationCard: View {
             Spacer()
             Text(value).foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .font(.appCallout)
     }
 
     private var formattedDate: String {

@@ -21,6 +21,10 @@ struct CallRecordingRecord: Identifiable, Codable, Equatable {
     let fileName: String
     let isIncomplete: Bool
     var title: String?
+    /// Module and SIM slot of the recorded call. Older recordings have
+    /// neither and fall back to their call-history record.
+    var moduleID: CellularModuleID? = nil
+    var simSlot: Int? = nil
 }
 
 @MainActor
@@ -45,7 +49,9 @@ final class CallRecordingStore: ObservableObject {
         callID: UUID?,
         number: String,
         direction: CallDirection,
-        startedAt: Date
+        startedAt: Date,
+        moduleID: CellularModuleID?,
+        simSlot: Int?
     )?
     private var player: AVAudioPlayer?
     private var playbackTimer: Timer?
@@ -67,7 +73,9 @@ final class CallRecordingStore: ObservableObject {
         localNumber: String?,
         number: String,
         direction: CallDirection,
-        callID: UUID?
+        callID: UUID?,
+        moduleID: CellularModuleID? = nil,
+        simSlot: Int? = nil
     ) {
         guard phase == .idle else { return }
         lastError = nil
@@ -84,7 +92,7 @@ final class CallRecordingStore: ObservableObject {
                 startedAt: startedAt,
                 outputURL: outputURL
             )
-            activeContext = (id, callID, number, direction, startedAt)
+            activeContext = (id, callID, number, direction, startedAt, moduleID, simSlot)
             activeRecordingStartedAt = startedAt
             phase = .recording
         } catch {
@@ -119,7 +127,9 @@ final class CallRecordingStore: ObservableObject {
                         duration: capture.duration,
                         fileName: capture.outputURL.lastPathComponent,
                         isIncomplete: capture.isIncomplete,
-                        title: nil
+                        title: nil,
+                        moduleID: context.moduleID,
+                        simSlot: context.simSlot
                     )
                     self.records.insert(record, at: 0)
                     self.save()

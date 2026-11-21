@@ -517,6 +517,254 @@ do {
         "incoming SMS identity was not namespaced by module"
     )
 
+    // MARK: Conversations merged by peer, and the lines they used
+
+    func lineMessage(
+        _ id: String,
+        module: CellularModuleID?,
+        slot: Int? = nil,
+        offset: TimeInterval,
+        direction: SMSDirection = .incoming
+    ) -> SMSMessage {
+        var message = conversationMessage(
+            id: id,
+            address: "+86 138 0013 8000",
+            body: id,
+            timestamp: conversationDate.addingTimeInterval(offset),
+            isRead: true,
+            direction: direction,
+            moduleID: module
+        )
+        message.simSlot = slot
+        return message
+    }
+    let mergedConversations = MessageConversation.groupedByPeer(from: [
+        lineMessage("a", module: firstSIM, offset: 0),
+        lineMessage("b", module: firstSIM, offset: 1, direction: .outgoing),
+        lineMessage("c", module: secondSIM, slot: 1, offset: 2, direction: .outgoing),
+        lineMessage("d", module: secondSIM, slot: 1, offset: 3),
+        lineMessage("e", module: secondSIM, slot: 2, offset: 4),
+        conversationMessage(
+            id: "other-peer",
+            address: "10086",
+            body: "x",
+            timestamp: conversationDate,
+            isRead: true,
+            moduleID: firstSIM
+        ),
+    ])
+    let mergedPeer = mergedConversations.first { $0.id == "13800138000" }
+    try expect(
+        mergedConversations.count == 2 && mergedPeer?.messages.count == 5,
+        "the same peer on different modules was not merged into one conversation"
+    )
+    try expect(
+        mergedPeer?.lines == [
+            CommunicationLine(moduleID: firstSIM, simSlot: nil),
+            CommunicationLine(moduleID: secondSIM, simSlot: 1),
+            CommunicationLine(moduleID: secondSIM, simSlot: 2),
+        ] && mergedPeer?.latestLine == CommunicationLine(moduleID: secondSIM, simSlot: 2),
+        "a merged conversation lost the order of the lines it used"
+    )
+    try expect(
+        mergedPeer?.lineChanges == [0: true, 2: false, 4: false],
+        "line changes inside a merged conversation were not found"
+    )
+    try expect(
+        mergedConversations.first { $0.id == "10086" }?.lineChanges.isEmpty == true,
+        "a conversation that used one line reported a line change"
+    )
+    let legacyThenTagged = MessageConversation.groupedByPeer(from: [
+        lineMessage("legacy", module: nil, offset: 0),
+        lineMessage("tagged-1", module: firstSIM, offset: 1),
+        lineMessage("tagged-2", module: secondSIM, offset: 2),
+    ]).first
+    try expect(
+        legacyThenTagged?.lineChanges == [1: true, 2: false],
+        "messages stored without a module broke line-change detection"
+    )
+
+    try expect(
+        LineBadgeText.text(moduleNumber: 1, simSlot: nil) == "1" &&
+            LineBadgeText.text(moduleNumber: 2, simSlot: 1) == "2·1",
+        "line badge text is wrong"
+    )
+
+    // MARK: Module appearance registry
+
+    var appearanceRegistry = ModuleAppearanceRegistry()
+    try expect(
+        appearanceRegistry.update(attached: [
+            .init(id: firstSIM, number: 1, imei: nil),
+            .init(id: secondSIM, number: 2, imei: "860000000000002"),
+        ]) &&
+            appearanceRegistry.entry(for: firstSIM)?.colorIndex == 0 &&
+            appearanceRegistry.entry(for: secondSIM)?.colorIndex == 1,
+        "attached modules did not get distinct colours in order"
+    )
+    try expect(
+        !appearanceRegistry.update(attached: [
+            .init(id: firstSIM, number: 1, imei: nil),
+            .init(id: secondSIM, number: 2, imei: "860000000000002"),
+        ]),
+        "an unchanged module list reported a registry change"
+    )
+    // Module 1 is unplugged: module 2 becomes "模组 1" but keeps its colour.
+    appearanceRegistry.update(attached: [
+        .init(id: secondSIM, number: 1, imei: "860000000000002"),
+    ])
+    try expect(
+        appearanceRegistry.entry(for: secondSIM)?.colorIndex == 1 &&
+            appearanceRegistry.entry(for: secondSIM)?.number == 1 &&
+            appearanceRegistry.entry(for: firstSIM)?.number == 1,
+        "a module's colour followed its position instead of the module"
+    )
+    // The same module shows up on another USB port; its IMEI is read later.
+    let movedPort = CellularModuleID(rawValue: "usb-location:05100000")
+    appearanceRegistry.update(attached: [.init(id: movedPort, number: 1, imei: nil)])
+    let provisionalColor = appearanceRegistry.entry(for: movedPort)?.colorIndex
+    appearanceRegistry.update(attached: [
+        .init(id: movedPort, number: 1, imei: "860000000000002"),
+    ])
+    try expect(
+        provisionalColor == 2 && appearanceRegistry.entry(for: movedPort)?.colorIndex == 1,
+        "a module moved to another port did not keep its colour"
+    )
+    let registryData = try JSONEncoder().encode(appearanceRegistry)
+    let decodedRegistry = try JSONDecoder().decode(
+        ModuleAppearanceRegistry.self,
+        from: registryData
+    )
+    try expect(
+        decodedRegistry == appearanceRegistry,
+        "module appearance registry did not survive encoding"
+    )
+
+    // MARK: Line appearance and the default sending line
+
+    func lineModule(
+        _ id: CellularModuleID,
+        number: Int,
+        carrier: String,
+        slot: Int? = nil,
+        ready: Bool = true
+    ) -> CellularModuleSummary {
+        CellularModuleSummary(
+            id: id,
+            displayName: "模组 \(number)",
+            modem: ModemSnapshot(
+                state: .connected,
+                operatorName: carrier,
+                accessTechnology: "LTE",
+                simState: ready ? .ready : .absent,
+                simSlot: slot,
+                simSlotSwitchingSupported: slot != nil
+            ),
+            network: CellularNetworkStatus(),
+            cardKind: .physicalSIM,
+            isActiveSession: true,
+            isPrimaryData: false
+        )
+    }
+    var lineRegistry = ModuleAppearanceRegistry()
+    lineRegistry.update(attached: [
+        .init(id: firstSIM, number: 1, imei: "860000000000001"),
+        .init(id: secondSIM, number: 2, imei: "860000000000002"),
+    ])
+    let lineResolver = LineAppearanceResolver(
+        modules: [
+            lineModule(firstSIM, number: 1, carrier: "中国移动"),
+            lineModule(secondSIM, number: 2, carrier: "中国电信", slot: 1),
+        ],
+        registry: lineRegistry
+    )
+    let liveSlot = lineResolver.appearance(moduleID: secondSIM, simSlot: 1)
+    try expect(
+        liveSlot.badgeText == "2·1" && liveSlot.colorIndex == 1 && liveSlot.isLive &&
+            liveSlot.title == "模组 2 · 卡 1" && liveSlot.fullTitle == "模组 2 · 卡 1 · 中国电信",
+        "a live SIM slot was not described correctly"
+    )
+    let idleSlot = lineResolver.appearance(moduleID: secondSIM, simSlot: 2)
+    try expect(
+        idleSlot.badgeText == "2·2" && idleSlot.colorIndex == 1 && idleSlot.isAttached &&
+            !idleSlot.isLive && idleSlot.carrier == nil,
+        "the inactive SIM slot of an attached module was treated as live"
+    )
+    try expect(
+        lineResolver.appearance(moduleID: nil, simSlot: nil).badgeText == nil &&
+            lineResolver.appearance(moduleID: movedPort, simSlot: nil).badgeText == nil,
+        "a record without a known module was given a badge"
+    )
+    let unpluggedResolver = LineAppearanceResolver(
+        modules: [lineModule(secondSIM, number: 1, carrier: "中国电信", slot: 1)],
+        registry: lineRegistry
+    )
+    let unplugged = unpluggedResolver.appearance(moduleID: firstSIM, simSlot: nil)
+    try expect(
+        unplugged.badgeText == "1" && unplugged.colorIndex == nil && !unplugged.isAttached &&
+            !unplugged.isLive,
+        "history of an unplugged module lost its badge or stayed coloured"
+    )
+    try expect(
+        unpluggedResolver.appearance(moduleID: secondSIM, simSlot: 1).colorIndex == 1,
+        "a module changed colour when another one was unplugged"
+    )
+    try expect(
+        lineResolver.defaultSendModule(
+            lastLine: CommunicationLine(moduleID: secondSIM, simSlot: 1),
+            current: firstSIM
+        ) == SendModuleChoice(moduleID: secondSIM, fellBack: false),
+        "a reply did not default to the line last used with the peer"
+    )
+    try expect(
+        lineResolver.defaultSendModule(
+            lastLine: CommunicationLine(moduleID: secondSIM, simSlot: 2),
+            current: firstSIM
+        ) == SendModuleChoice(moduleID: firstSIM, fellBack: true),
+        "a reply on an inactive SIM slot did not fall back to the current module"
+    )
+    try expect(
+        lineResolver.defaultSendModule(lastLine: nil, current: secondSIM) ==
+            SendModuleChoice(moduleID: secondSIM, fellBack: false),
+        "a new conversation did not start on the current module"
+    )
+    try expect(
+        unpluggedResolver.defaultSendModule(
+            lastLine: CommunicationLine(moduleID: firstSIM, simSlot: nil),
+            current: nil
+        ) == SendModuleChoice(moduleID: secondSIM, fellBack: true),
+        "a reply for an unplugged module did not fall back to an attached one"
+    )
+    try expect(
+        lineResolver.sendOptions.map(\.appearance.badgeText) == ["1", "2·1"],
+        "send options did not list each module at its active SIM slot"
+    )
+
+    // MARK: Faces
+
+    try expect(
+        ContactFace.face(for: "+86 138-0013-8000") == ContactFace.face(for: "138 0013 8000") &&
+            ContactFace.face(for: "13800138000").expression != .robot,
+        "the same number written differently got different faces"
+    )
+    try expect(
+        Set((0 ..< 200).map { ContactFace.face(for: "1380013\(8000 + $0)").expression }).count ==
+            ContactFaceExpression.human.count,
+        "personal numbers do not spread over every expression"
+    )
+    for automated in ["10086", "95588", "106 9055 0100", "400 800 0100", "BANK", "12306"] {
+        try expect(
+            ContactFace.face(for: automated).expression == .robot,
+            "automated sender \(automated) was drawn with a human face"
+        )
+    }
+    for personal in ["+86 139 0013 9000", "+1 (415) 555-0132", "021 5555 0123", ""] {
+        try expect(
+            ContactFace.face(for: personal).expression != .robot,
+            "personal number \(personal) was drawn as an automated sender"
+        )
+    }
+
     try expect(
         SMSVerificationCodeExtractor.extract(from: "【CellDock】您的验证码为 482913，5 分钟内有效。") == "482913",
         "Chinese verification code extraction"

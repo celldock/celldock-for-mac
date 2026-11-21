@@ -1756,3 +1756,25 @@
 "连接地址" = "Connexion";
 "隐藏密码" = "Masquer le mot de passe";
 "需要用户名和密码" = "Exiger un nom d’utilisateur et un mot de passe";
+
+/* Messages, Recents and Recordings redesign */
+"%lld 字" = "%lld caractères";
+"%lld 字 · %lld 条短信" = "%lld caractères · %lld SMS";
+"⌘Return 发送" = "⌘Retour pour envoyer";
+"上次用的 %@ 当前不可用，已改用 %@ 发送。" = "%@, utilisée la dernière fois, est indisponible. L’envoi passera par %@.";
+"与此号码的全部通话（%lld 次）" = "Tous les appels avec ce numéro (%lld)";
+"全部线路" = "Toutes les lignes";
+"已移除的模组" = "Module retiré";
+"按线路筛选" = "Filtrer par ligne";
+"最近一次通过 %@，也用过 %@" = "Dernièrement via %@ ; a aussi utilisé %@";
+"未记录线路" = "Ligne non enregistrée";
+"本次通话" = "Cet appel";
+"用 %@ 回拨" = "Rappeler avec %@";
+"线路" = "Ligne";
+"选择发送线路" = "Choisir la ligne d’envoi";
+"选择线路" = "Choisir une ligne";
+"未读" = "Non lus";
+"没有未读短信" = "Aucun message non lu";
+"没有符合条件的对话" = "Aucune conversation correspondante";
+"通过 %@ 收发" = "Échanges via %@";
+"切换到 %@ 收发" = "Passage à %@";

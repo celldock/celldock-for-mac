@@ -10,19 +10,23 @@ struct MessagesWindowView: View {
 
     @State private var selectedConversationID: MessageConversation.ID?
     @State private var searchText = ""
+    @State private var unreadOnly = false
+    @State private var lineFilter: CommunicationLine?
     @State private var isComposingNew = false
     @State private var newDestination = ""
     @FocusState private var listFocused: Bool
 
     var body: some View {
+        let resolver = appState.lineAppearanceResolver
         ResizableCommunicationSplit(sidebarWidth: $sidebarWidth) {
-            conversationSidebar
+            conversationSidebar(resolver: resolver)
         } detail: {
             Group {
                 if isComposingNew {
                     NewConversationView(
                         destination: $newDestination,
-                        contacts: contacts
+                        contacts: contacts,
+                        resolver: resolver
                     ) { destination in
                         selectConversation(for: destination)
                     }
@@ -31,9 +35,12 @@ struct MessagesWindowView: View {
                     MessageThreadView(
                         conversation: conversation,
                         contactName: contacts.displayName(for: conversation.address),
+                        resolver: resolver,
                         scrollTargetMessageID: model.requestedMessageID,
                         didRouteMessage: selectConversation(for:)
                     )
+                    // Each peer keeps its own draft and line choice.
+                    .id(conversation.id)
                     .environmentObject(appState)
                 } else {
                     ContentUnavailableView(
@@ -74,10 +81,16 @@ struct MessagesWindowView: View {
         }
     }
 
-    private var conversationSidebar: some View {
-        VStack(spacing: 0) {
+    private func conversationSidebar(resolver: LineAppearanceResolver) -> some View {
+        let allConversations = conversations
+        let filterLines = Self.filterLines(in: allConversations, resolver: resolver)
+        let activeFilter = filterLines.contains { $0.line == lineFilter } ? lineFilter : nil
+        let visible = filtered(allConversations, lineFilter: activeFilter)
+
+        return VStack(spacing: 0) {
             HStack(spacing: 8) {
                 TextField(L10n.tr("搜索联系人、号码或短信"), text: $searchText)
+                    .font(.appCallout)
                     .communicationSearchField()
 
                 CommunicationIconActionButton(
@@ -89,36 +102,26 @@ struct MessagesWindowView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
 
+            CommunicationGlassTabs(
+                items: [(false, "全部"), (true, "未读")],
+                selection: $unreadOnly
+            )
+            .padding(.horizontal, 14)
+            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
+
+            if filterLines.count > 1 {
+                LineFilterBar(lines: filterLines, selection: $lineFilter)
+                    .padding(.bottom, 10)
+            }
+
             Divider()
 
             List {
-                if filteredConversations.isEmpty {
-                    ContentUnavailableView.search(text: searchText)
+                if visible.isEmpty {
+                    emptyListState
                 } else {
-                    ForEach(filteredConversations) { conversation in
-                        ConversationRow(
-                            conversation: conversation,
-                            displayName: contacts.displayName(for: conversation.address)
-                        )
-                        .communicationSelectionHighlight(selectedConversationID == conversation.id)
-                        .contentShape(Rectangle())
-                        .onTapGesture { selectedConversationID = conversation.id }
-                        .accessibilityAddTraits(
-                            selectedConversationID == conversation.id ? .isSelected : []
-                        )
-                        .tag(conversation.id)
-                        .contextMenu {
-                            if SMSPDUEncoder.isValidDestination(conversation.address) {
-                                Button(L10n.tr("呼叫"), systemImage: "phone") {
-                                    CommunicationWindowController.shared.showPhone(
-                                        number: conversation.address
-                                    )
-                                }
-                            }
-                            Button(L10n.tr("全部标为已读"), systemImage: "envelope.open") {
-                                markConversationRead(conversation)
-                            }
-                        }
+                    ForEach(visible) { conversation in
+                        conversationRow(conversation, resolver: resolver)
                     }
                 }
             }
@@ -131,7 +134,7 @@ struct MessagesWindowView: View {
                 if appState.unreadCount > 0 {
                     HStack {
                         Text(L10n.tr("%lld 条未读", Int64(appState.unreadCount)))
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundStyle(.secondary)
                         Spacer()
                         Button(L10n.tr("全部已读")) { appState.markAllRead() }
@@ -146,14 +149,75 @@ struct MessagesWindowView: View {
         .communicationModuleFloatingSidebar()
     }
 
-    private var conversations: [MessageConversation] {
-        MessageConversation.grouped(from: appState.messages)
+    @ViewBuilder
+    private var emptyListState: some View {
+        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ContentUnavailableView(
+                L10n.tr(unreadOnly ? "没有未读短信" : "没有符合条件的对话"),
+                systemImage: unreadOnly ? "envelope.open" : "line.3.horizontal.decrease.circle"
+            )
+        } else {
+            ContentUnavailableView.search(text: searchText)
+        }
     }
 
-    private var filteredConversations: [MessageConversation] {
+    private func conversationRow(
+        _ conversation: MessageConversation,
+        resolver: LineAppearanceResolver
+    ) -> some View {
+        let latestLine = conversation.latestLine
+        // A second badge only when the peer was also reached through another
+        // module; two SIM slots of one module already share a colour.
+        let otherLine = conversation.lines.last { $0.moduleID != latestLine?.moduleID }
+        let isSelected = selectedConversationID == conversation.id
+        return ConversationRowContent(
+            title: presentedIdentity(for: conversation),
+            address: conversation.address,
+            preview: appState.privacyPresentation.messagePreview(
+                conversation.latestMessage?.preview ?? ""
+            ),
+            timestamp: conversation.latestMessage.map {
+                CommunicationUI.listTimestamp($0.timestamp)
+            },
+            unreadCount: conversation.unreadCount,
+            latestIsOutgoing: conversation.latestMessage?.isOutgoing == true,
+            line: resolver.appearance(for: latestLine),
+            secondaryLine: otherLine.map { resolver.appearance(for: $0) }
+        )
+        .communicationSelectionHighlight(isSelected)
+        .contentShape(Rectangle())
+        .onTapGesture { selectedConversationID = conversation.id }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .tag(conversation.id)
+        .contextMenu {
+            if SMSPDUEncoder.isValidDestination(conversation.address) {
+                Button(L10n.tr("呼叫"), systemImage: "phone") {
+                    CommunicationWindowController.shared.showPhone(
+                        number: conversation.address
+                    )
+                }
+            }
+            Button(L10n.tr("全部标为已读"), systemImage: "envelope.open") {
+                markConversationRead(conversation)
+            }
+        }
+    }
+
+    /// One conversation per peer: the same number is a single row whichever
+    /// module carried its messages.
+    private var conversations: [MessageConversation] {
+        MessageConversation.groupedByPeer(from: appState.messages)
+    }
+
+    private func filtered(
+        _ conversations: [MessageConversation],
+        lineFilter: CommunicationLine?
+    ) -> [MessageConversation] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return conversations }
         return conversations.filter { conversation in
+            if unreadOnly, !conversation.hasUnread { return false }
+            if let lineFilter, !conversation.lines.contains(lineFilter) { return false }
+            guard !query.isEmpty else { return true }
             let name = contacts.displayName(for: conversation.address) ?? ""
             return name.localizedCaseInsensitiveContains(query) ||
                 conversation.address.localizedCaseInsensitiveContains(query) ||
@@ -163,18 +227,35 @@ struct MessagesWindowView: View {
         }
     }
 
+    /// Every line that appears in the list, ordered by module and SIM slot.
+    private static func filterLines(
+        in conversations: [MessageConversation],
+        resolver: LineAppearanceResolver
+    ) -> [LineAppearance] {
+        var seen = Set<CommunicationLine>()
+        return conversations
+            .flatMap(\.lines)
+            .filter { seen.insert($0).inserted }
+            .map { resolver.appearance(for: $0) }
+            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
+    }
+
     private var selectedConversation: MessageConversation? {
         guard let selectedConversationID else { return nil }
         return conversations.first { $0.id == selectedConversationID }
     }
 
+    private func presentedIdentity(for conversation: MessageConversation) -> String {
+        appState.privacyPresentation.identity(
+            contactName: contacts.displayName(for: conversation.address),
+            number: conversation.address
+        )
+    }
+
     private func handlePresentationRequest() {
         if let messageID = model.requestedMessageID,
            let message = appState.messages.first(where: { $0.id == messageID }) {
-            let conversationID = MessageConversation.conversationID(
-                for: message.peerAddress,
-                moduleID: message.moduleID
-            )
+            let conversationID = MessageConversation.conversationID(for: message.peerAddress)
             selectedConversationID = conversationID
             isComposingNew = false
             if let conversation = conversations.first(where: { $0.id == conversationID }) {
@@ -190,10 +271,7 @@ struct MessagesWindowView: View {
     }
 
     private func selectConversation(for destination: String) {
-        let id = MessageConversation.conversationID(
-            for: destination,
-            moduleID: appState.currentCommunicationModuleID
-        )
+        let id = MessageConversation.conversationID(for: destination)
         if conversations.contains(where: { $0.id == id }) {
             selectedConversationID = id
             isComposingNew = false
@@ -233,7 +311,7 @@ struct MessagesWindowView: View {
     private func handleFocusFirstItemRequest() {
         guard focusFirstItemRequest else { return }
         isComposingNew = false
-        selectedConversationID = filteredConversations.first?.id
+        selectedConversationID = filtered(conversations, lineFilter: nil).first?.id
         didHandleFocusFirstItemRequest()
         listFocused = false
         DispatchQueue.main.async {
@@ -242,92 +320,17 @@ struct MessagesWindowView: View {
     }
 }
 
-private struct ConversationRow: View {
-    @EnvironmentObject private var appState: AppState
-    let conversation: MessageConversation
-    let displayName: String?
-
-    var body: some View {
-        HStack(spacing: 10) {
-            MessageConversationAvatar(
-                title: presentedIdentity,
-                address: conversation.address,
-                size: 34
-            )
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(verbatim: presentedIdentity)
-                        .font(.body.weight(conversation.unreadCount > 0 ? .semibold : .regular))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 6)
-                    if let date = conversation.latestMessage?.timestamp {
-                        Text(verbatim: CommunicationUI.listTimestamp(date))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .layoutPriority(1)
-                    }
-                }
-                HStack(spacing: 5) {
-                    if let moduleName {
-                        Text(verbatim: moduleName)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.blue)
-                    }
-                    if conversation.latestMessage?.isOutgoing == true {
-                        Image(systemName: "arrowshape.turn.up.right.fill")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(verbatim: appState.privacyPresentation.messagePreview(
-                        conversation.latestMessage?.preview ?? ""
-                    ))
-                        .font(.caption)
-                        .foregroundStyle(conversation.unreadCount > 0 ? .primary : .secondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    if conversation.unreadCount > 0 {
-                        Text("\(conversation.unreadCount)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.accentColor, in: Capsule())
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    private var moduleName: String? {
-        guard let moduleID = conversation.moduleID,
-              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.displayName else {
-            return nil
-        }
-        // Conversations group by module; show the card of the latest message.
-        guard let simSlot = conversation.latestMessage?.simSlot else { return name }
-        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
-    }
-
-    private var presentedIdentity: String {
-        appState.privacyPresentation.identity(
-            contactName: displayName,
-            number: conversation.address
-        )
-    }
-}
-
 private struct MessageThreadView: View {
     @EnvironmentObject private var appState: AppState
     let conversation: MessageConversation
     let contactName: String?
+    let resolver: LineAppearanceResolver
     let scrollTargetMessageID: SMSMessage.ID?
     let didRouteMessage: (String) -> Void
 
     @State private var draft = ""
+    /// The line the user picked for this peer; nil follows the default.
+    @State private var chosenModuleID: CellularModuleID?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -341,28 +344,41 @@ private struct MessageThreadView: View {
     }
 
     private var threadHeader: some View {
-        HStack(spacing: 12) {
-            MessageConversationAvatar(
-                title: presentedIdentity,
+        HStack(spacing: 10) {
+            ContactFaceAvatar(
                 address: conversation.address,
-                size: 38
+                size: AppMetrics.Avatar.header,
+                tint: resolver.appearance(for: conversation.latestLine).tint
             )
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: presentedIdentity)
-                    .font(.headline)
+                    .font(.appHeadline)
+                    .lineLimit(1)
                 if contactName != nil {
                     Text(verbatim: appState.privacyPresentation.phoneNumber(conversation.address))
-                        .font(.caption.monospacedDigit())
+                        .font(.appCaption)
+                        .monospacedDigit()
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            Spacer()
+            .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 6) {
+                ForEach(conversation.lines.prefix(3).map { resolver.appearance(for: $0) }) { line in
+                    LineChip(appearance: line)
+                }
+            }
+
             if SMSPDUEncoder.isValidDestination(conversation.address) {
                 Button {
                     CommunicationWindowController.shared.showPhone(number: conversation.address)
                 } label: {
                     Image(systemName: "phone.fill")
+                        .font(.appSymbol(.inline))
                         .frame(width: 16, height: 16)
                 }
                 .adaptiveGlassButton()
@@ -373,21 +389,35 @@ private struct MessageThreadView: View {
             }
         }
         .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+        .frame(minHeight: AppMetrics.Row.header)
     }
 
     private var messageHistory: some View {
-        ScrollViewReader { proxy in
+        let lineChanges = conversation.lineChanges
+        let appearances = Dictionary(
+            uniqueKeysWithValues: conversation.lines.map { ($0, resolver.appearance(for: $0)) }
+        )
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 9) {
                     ForEach(Array(conversation.messages.enumerated()), id: \.element.id) { index, message in
                         if shouldShowDate(at: index) {
                             Text(verbatim: message.timestamp.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .font(.appCaption)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
                                 .padding(.vertical, 5)
                         }
-                        MessageBubble(message: message)
+                        if let isFirst = lineChanges[index],
+                           let line = message.line,
+                           let appearance = appearances[line] {
+                            LineChangeNotice(appearance: appearance, isFirst: isFirst)
+                        }
+                        MessageBubble(
+                            message: message,
+                            outgoingColor: message.line
+                                .flatMap { appearances[$0] }?.tint.solid ?? Color.accentColor
+                        )
                             .id(message.id)
                             .contextMenu {
                                 Button(L10n.tr("复制"), systemImage: "doc.on.doc") {
@@ -403,14 +433,16 @@ private struct MessageThreadView: View {
                                     Button(L10n.tr("重新发送"), systemImage: "arrow.clockwise") {
                                         appState.sendSMS(
                                             to: conversation.address,
-                                            body: message.body
+                                            body: message.body,
+                                            via: sendModuleID
                                         ) { _ in
                                             didRouteMessage(conversation.address)
                                         }
                                     }
                                     .disabled(
-                                        appState.isSendingMessage(via: nil) ||
-                                            appState.moduleHasCall(nil)
+                                        sendModuleID == nil ||
+                                            appState.isSendingMessage(via: sendModuleID) ||
+                                            appState.moduleHasCall(sendModuleID)
                                     )
                                 }
                                 Divider()
@@ -465,87 +497,80 @@ private struct MessageThreadView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 5) {
-            HStack(alignment: .center, spacing: 10) {
-                TextField(L10n.tr("输入短信"), text: $draft, axis: .vertical)
-                    .font(.body)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1 ... 5)
-                    .focused($composerFocused)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .adaptiveGlassSurface(
-                        cornerRadius: 17,
-                        treatment: .clear,
-                        isInteractive: true
-                    )
-
-                Button(action: send) {
-                    Group {
-                        if appState.isSendingMessage(via: nil) {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: "arrow.up")
-                        }
-                    }
-                    .frame(width: 18, height: 18)
-                }
-                .adaptiveGlassButton(.accented)
-                .buttonBorderShape(.circle)
-                .controlSize(.small)
-                .keyboardShortcut(.return, modifiers: [.command])
-                .disabled(!canSend)
-                .help(appState.moduleHasCall(nil) ? L10n.tr("当前模组通话期间会保存草稿，但不能发送短信") : L10n.tr("发送（⌘Return）"))
-            }
-
-            HStack {
-                Text(verbatim: compositionStatus)
-                Spacer()
-                Text(verbatim: currentCommunicationStatus)
-            }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-        }
+        MessageComposerBar(
+            draft: $draft,
+            options: sendOptions,
+            selectedModuleID: sendModuleID,
+            onSelectModule: { chosenModuleID = $0 },
+            canSend: canSend,
+            isSending: appState.isSendingMessage(via: sendModuleID),
+            sendHelp: sendModuleID.map(appState.moduleHasCall) == true
+                ? L10n.tr("当前模组通话期间会保存草稿，但不能发送短信")
+                : L10n.tr("发送（⌘Return）"),
+            note: fallbackNote,
+            statusLeading: MessageComposerText.count(for: draft, destination: conversation.address),
+            statusTrailing: MessageComposerText.route(for: selectedOption),
+            focus: $composerFocused,
+            onSend: send
+        )
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
     }
 
+    private var sendOptions: [SendLineOption] {
+        resolver.sendOptions
+    }
+
+    private var defaultChoice: SendModuleChoice {
+        resolver.defaultSendModule(
+            lastLine: conversation.latestLine,
+            current: appState.currentCommunicationModuleID
+        )
+    }
+
+    /// The user's pick while that module can still send, otherwise the default.
+    private var sendModuleID: CellularModuleID? {
+        if let chosenModuleID,
+           sendOptions.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
+            return chosenModuleID
+        }
+        return defaultChoice.moduleID
+    }
+
+    private var selectedOption: SendLineOption? {
+        sendOptions.first { $0.moduleID == sendModuleID }
+    }
+
+    /// Said once, above the input, when a reply cannot go out on the line
+    /// this peer was last reached through.
+    private var fallbackNote: String? {
+        guard chosenModuleID == nil, defaultChoice.fellBack,
+              let selectedOption else {
+            return nil
+        }
+        return L10n.tr(
+            "上次用的 %@ 当前不可用，已改用 %@ 发送。",
+            resolver.appearance(for: conversation.latestLine).title,
+            selectedOption.appearance.title
+        )
+    }
+
     private var canSend: Bool {
-        appState.moduleIsConnected(nil) &&
-            !appState.moduleHasCall(nil) &&
-            !appState.isSendingMessage(via: nil) &&
+        guard let sendModuleID else { return false }
+        return appState.moduleIsConnected(sendModuleID) &&
+            !appState.moduleHasCall(sendModuleID) &&
+            !appState.isSendingMessage(via: sendModuleID) &&
             !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             SMSPDUEncoder.segmentCount(destination: conversation.address, body: draft) != nil
     }
 
-    private var compositionStatus: String {
-        let count = draft.utf16.count
-        guard let segments = SMSPDUEncoder.segmentCount(
-            destination: conversation.address,
-            body: draft
-        ) else { return L10n.tr("%lld 个 UCS-2 单元", Int64(count)) }
-        return L10n.tr("%lld 个单元 · %lld 条短信", Int64(count), Int64(segments))
-    }
-
     private func send() {
         let body = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSend, !body.isEmpty else { return }
+        guard canSend, !body.isEmpty, let sendModuleID else { return }
         draft = ""
-        appState.sendSMS(to: conversation.address, body: body) { _ in
+        appState.sendSMS(to: conversation.address, body: body, via: sendModuleID) { _ in
             didRouteMessage(conversation.address)
         }
-    }
-
-    private var currentCommunicationStatus: String {
-        guard let module = appState.currentCommunicationModule else {
-            return L10n.tr("未选择通信模组")
-        }
-        return module.isCommunicationEligible
-            ? L10n.tr("通过 %@ 发送", [module.displayName, module.simSlotTitle]
-                .compactMap { $0 }
-                .joined(separator: " · "))
-            : L10n.tr("当前模组未就绪")
     }
 
     private func shouldShowDate(at index: Int) -> Bool {
@@ -557,9 +582,31 @@ private struct MessageThreadView: View {
     }
 }
 
+/// The two status texts under the message input.
+enum MessageComposerText {
+    static func count(for draft: String, destination: String) -> String {
+        let count = draft.utf16.count
+        guard count > 0 else { return L10n.tr("⌘Return 发送") }
+        guard let segments = SMSPDUEncoder.segmentCount(
+            destination: destination,
+            body: draft
+        ) else { return L10n.tr("%lld 字", Int64(count)) }
+        return L10n.tr("%lld 字 · %lld 条短信", Int64(count), Int64(segments))
+    }
+
+    static func route(for option: SendLineOption?) -> String {
+        guard let option else { return L10n.tr("未选择通信模组") }
+        return option.isEligible
+            ? L10n.tr("通过 %@ 发送", option.appearance.fullTitle)
+            : L10n.tr("当前模组未就绪")
+    }
+}
+
 private struct MessageBubble: View {
     @EnvironmentObject private var appState: AppState
     let message: SMSMessage
+    /// Solid colour of the module that sent this message.
+    let outgoingColor: Color
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 7) {
@@ -570,11 +617,12 @@ private struct MessageBubble: View {
                     message: message,
                     isOnAccentBackground: message.isOutgoing
                 )
+                    .font(.appBody)
                     .padding(.leading, message.isOutgoing ? 13 : 19)
                     .padding(.trailing, message.isOutgoing ? 19 : 13)
                     .padding(.vertical, 9)
                     .background(
-                        message.isOutgoing ? Color.accentColor : Color.secondary.opacity(0.14),
+                        message.isOutgoing ? outgoingColor : Color.secondary.opacity(0.14),
                         in: MessageBubbleShape(isOutgoing: message.isOutgoing)
                     )
                     .foregroundStyle(message.isOutgoing ? Color.white : Color.primary)
@@ -585,7 +633,7 @@ private struct MessageBubble: View {
                     } icon: {
                         Image(systemName: deliveryIcon)
                     }
-                        .font(.caption2)
+                        .font(.appCaption)
                         .foregroundStyle(deliveryColor)
                         .help(message.localizedDeliveryDetail ?? deliveryText)
                 }
@@ -707,51 +755,15 @@ private struct MessageBubbleShape: Shape {
     }
 }
 
-private struct MessageConversationAvatar: View {
-    let title: String
-    let address: String
-    let size: CGFloat
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(color.opacity(0.14))
-
-            Text(verbatim: initial)
-                .font(.system(size: size * 0.44, weight: .semibold, design: .rounded))
-                .foregroundStyle(color)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
-    }
-
-    private var initial: String {
-        title.first.map(String.init) ?? "?"
-    }
-
-    private var color: Color {
-        let palette: [Color] = [
-            .blue, .indigo, .purple, .pink,
-            .orange, .teal, .cyan, .mint,
-        ]
-        let identity = PhoneNumberNormalizer.conversationID(for: address)
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in identity.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 1_099_511_628_211
-        }
-        return palette[Int(hash % UInt64(palette.count))]
-    }
-}
-
 private struct NewConversationView: View {
     @EnvironmentObject private var appState: AppState
     @Binding var destination: String
     @ObservedObject var contacts: SystemContactStore
+    let resolver: LineAppearanceResolver
     let didSend: (String) -> Void
 
     @State private var bodyText = ""
+    @State private var chosenModuleID: CellularModuleID?
     @FocusState private var recipientFocused: Bool
     @FocusState private var bodyFocused: Bool
 
@@ -759,6 +771,7 @@ private struct NewConversationView: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Text(L10n.tr("收件人："))
+                    .font(.appBody)
                     .foregroundStyle(.secondary)
                 Group {
                     if appState.isPresentationPrivacyEnabled {
@@ -767,10 +780,12 @@ private struct NewConversationView: View {
                         TextField(L10n.tr("姓名或电话号码"), text: $destination)
                     }
                 }
+                    .font(.appBody)
                     .textFieldStyle(.plain)
                     .focused($recipientFocused)
             }
-            .padding(14)
+            .padding(.horizontal, 18)
+            .frame(minHeight: AppMetrics.Row.header)
 
             if !contactSuggestions.isEmpty, !destination.isEmpty {
                 HStack {
@@ -788,12 +803,13 @@ private struct NewConversationView: View {
                             } icon: {
                                 Image(systemName: "person.crop.circle")
                             }
+                            .font(.appCallout)
                         }
                         .adaptiveGlassButton()
                     }
                     Spacer()
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 18)
                 .padding(.bottom, 10)
             }
 
@@ -801,38 +817,21 @@ private struct NewConversationView: View {
 
             Spacer()
 
-            VStack(spacing: 6) {
-                HStack(alignment: .center, spacing: 10) {
-                    TextField(L10n.tr("输入短信"), text: $bodyText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1 ... 5)
-                        .focused($bodyFocused)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .adaptiveGlassSurface(
-                            cornerRadius: 17,
-                            treatment: .clear,
-                            isInteractive: true
-                        )
-                    Button(action: send) {
-                        Image(systemName: "arrow.up")
-                            .frame(width: 18, height: 18)
-                    }
-                    .adaptiveGlassButton(.accented)
-                    .buttonBorderShape(.circle)
-                    .controlSize(.small)
-                    .keyboardShortcut(.return, modifiers: [.command])
-                    .disabled(!canSend)
-                }
-                HStack {
-                    Text(L10n.tr("%lld 个 UCS-2 单元", Int64(bodyText.utf16.count)))
-                    Spacer()
-                    Text(L10n.tr("通过当前 SIM 卡发送"))
-                }
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            }
-            .padding(16)
+            MessageComposerBar(
+                draft: $bodyText,
+                options: sendOptions,
+                selectedModuleID: sendModuleID,
+                onSelectModule: { chosenModuleID = $0 },
+                canSend: canSend,
+                isSending: appState.isSendingMessage(via: sendModuleID),
+                sendHelp: L10n.tr("发送（⌘Return）"),
+                statusLeading: MessageComposerText.count(for: bodyText, destination: destination),
+                statusTrailing: MessageComposerText.route(for: selectedOption),
+                focus: $bodyFocused,
+                onSend: send
+            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
         }
         .onAppear { recipientFocused = destination.isEmpty }
     }
@@ -846,20 +845,42 @@ private struct NewConversationView: View {
         }
     }
 
+    private var sendOptions: [SendLineOption] {
+        resolver.sendOptions
+    }
+
+    /// A new conversation has no line of its own yet, so it starts on the
+    /// current module unless the user picks another one.
+    private var sendModuleID: CellularModuleID? {
+        if let chosenModuleID,
+           sendOptions.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
+            return chosenModuleID
+        }
+        return resolver.defaultSendModule(
+            lastLine: nil,
+            current: appState.currentCommunicationModuleID
+        ).moduleID
+    }
+
+    private var selectedOption: SendLineOption? {
+        sendOptions.first { $0.moduleID == sendModuleID }
+    }
+
     private var canSend: Bool {
-        appState.moduleIsConnected(nil) &&
-            !appState.currentCommunicationModuleHasCall &&
-            !appState.isSendingMessageOnCurrentModule &&
+        guard let sendModuleID else { return false }
+        return appState.moduleIsConnected(sendModuleID) &&
+            !appState.moduleHasCall(sendModuleID) &&
+            !appState.isSendingMessage(via: sendModuleID) &&
             SMSPDUEncoder.segmentCount(destination: destination, body: bodyText) != nil &&
             !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func send() {
         let body = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard canSend else { return }
+        guard canSend, let sendModuleID else { return }
         bodyText = ""
         let recipient = destination
-        appState.sendSMS(to: recipient, body: body) { _ in
+        appState.sendSMS(to: recipient, body: body, via: sendModuleID) { _ in
             didSend(recipient)
         }
     }

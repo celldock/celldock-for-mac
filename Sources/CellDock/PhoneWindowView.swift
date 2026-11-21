@@ -173,18 +173,23 @@ struct CommunicationModuleStatusMenu: View {
                 .frame(width: 14, height: 18)
                 .accessibilityHidden(true)
 
-                Text(pickerTitle)
+                if let appearance = selectedAppearance,
+                   let badgeText = appearance.badgeText {
+                    LineBadge(text: badgeText, color: appearance.tint.solid)
+                }
+
+                Text(pillTitle)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Spacer(minLength: 4)
 
                 Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 14)
             }
-            .font(.callout)
+            .font(.appCallout)
             .padding(.horizontal, 12)
             .frame(width: 210, height: 36)
             .contentShape(
@@ -289,13 +294,18 @@ struct CommunicationModuleStatusMenu: View {
                 .frame(width: 20, height: 24)
                 .accessibilityHidden(true)
 
+                if let badgeText = appearance(of: module).badgeText {
+                    LineBadge(text: badgeText, color: appearance(of: module).tint.solid)
+                }
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(module.displayName) · \(module.carrierName)")
-                        .font(.callout.weight(.semibold))
+                        .font(.appBodyStrong)
                         .lineLimit(1)
 
                     Text(moduleSelectionDetail(module))
-                        .font(.caption.monospacedDigit())
+                        .font(.appCaption)
+                        .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -329,6 +339,27 @@ struct CommunicationModuleStatusMenu: View {
     private var pickerTitle: String {
         appState.currentCommunicationModule?.selectorTitle ??
             (appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组"))
+    }
+
+    private func appearance(of module: CellularModuleSummary) -> LineAppearance {
+        let resolver = appState.lineAppearanceResolver
+        return resolver.appearance(for: resolver.currentLine(of: module))
+    }
+
+    private var selectedAppearance: LineAppearance? {
+        selectedModule.map(appearance(of:))
+    }
+
+    /// The badge already says which module and SIM slot, so the label only
+    /// adds what the badge cannot: carrier and radio technology.
+    private var pillTitle: String {
+        guard let selectedModule else { return pickerTitle }
+        guard selectedModule.modem.simReady else {
+            return "\(selectedModule.localizedDisplayName) · \(selectedModule.statusText)"
+        }
+        return [selectedModule.carrierName, selectedModule.technologyName]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 
     private var selectedModule: CellularModuleSummary? {
@@ -1050,13 +1081,19 @@ private struct RecentCallsView: View {
     var didHandleFocusFirstItemRequest: () -> Void = {}
     @State private var missedOnly = false
     @State private var searchText = ""
+    @State private var lineFilter: CommunicationLine?
     @State private var deletingAll = false
     @FocusState private var listFocused: Bool
 
     var body: some View {
+        let resolver = appState.lineAppearanceResolver
+        let filterLines = Self.filterLines(in: history.records, resolver: resolver)
+        let visible = filteredRecords(availableLines: filterLines)
+
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 TextField("搜索联系人或号码", text: $searchText)
+                    .font(.appCallout)
                     .communicationSearchField()
 
                 CommunicationIconActionButton(
@@ -1076,11 +1113,16 @@ private struct RecentCallsView: View {
                 selection: $missedOnly
             )
             .padding(.horizontal, 14)
-            .padding(.bottom, 10)
+            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
+
+            if filterLines.count > 1 {
+                LineFilterBar(lines: filterLines, selection: $lineFilter)
+                    .padding(.bottom, 10)
+            }
 
             Divider()
 
-            if filteredRecords.isEmpty {
+            if visible.isEmpty {
                 PhoneEmptyState(
                     title: missedOnly ? "没有未接来电" : "暂无最近通话",
                     detail: "完成或错过的蜂窝电话会保存在此 Mac。",
@@ -1089,69 +1131,35 @@ private struct RecentCallsView: View {
             } else {
                 ScrollViewReader { proxy in
                     List {
-                        ForEach(filteredRecords) { record in
-                        HStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(iconTint(record).opacity(0.12))
-                                Image(systemName: iconName(record))
-                                    .foregroundStyle(iconTint(record))
-                            }
-                            .frame(width: 38, height: 38)
-                            .accessibilityHidden(true)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(presentedIdentity(record))
-                                    .font(.body.weight(record.isMissed ? .semibold : .regular))
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                HStack(spacing: 5) {
-                                    if let moduleName = moduleName(record) {
-                                        Text(moduleName)
-                                    }
-                                    if record.duration > 0 {
-                                        Text(formattedDuration(record.duration))
-                                    } else if let reason = record.endReason {
-                                        Text(callEndReasonText(record, reason: reason))
-                                    }
+                        ForEach(visible) { record in
+                            CallRowContent(
+                                title: presentedIdentity(record),
+                                address: record.number,
+                                status: RecentCallText.status(record),
+                                isMissed: record.isMissed,
+                                direction: record.direction,
+                                timestamp: CommunicationUI.listTimestamp(record.startedAt),
+                                hasRecording: matchingRecording(for: record) != nil,
+                                line: resolver.appearance(for: record.line)
+                            )
+                            .contentShape(Rectangle())
+                            .communicationSelectionHighlight(selectedRecordID == record.id)
+                            .onTapGesture { selectedRecordID = record.id }
+                            .accessibilityAddTraits(selectedRecordID == record.id ? .isSelected : [])
+                            .tag(record.id)
+                            .contextMenu {
+                                Button("回拨", systemImage: "phone") {
+                                    call(record, resolver: resolver)
                                 }
-                                .font(.caption)
-                                .foregroundStyle(record.isMissed ? Color.red : Color.secondary)
+                                .disabled(!canDial(record, resolver: resolver))
+                                Button("发短信", systemImage: "message") {
+                                    appState.showMessagesWindow(destination: record.number)
+                                }
+                                Divider()
+                                Button("删除记录", systemImage: "trash", role: .destructive) {
+                                    history.delete(record)
+                                }
                             }
-
-                            Spacer()
-
-                            Text(CommunicationUI.listTimestamp(record.startedAt))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: true, vertical: false)
-                                .layoutPriority(1)
-
-                            if matchingRecording(for: record) != nil {
-                                Image(systemName: "waveform")
-                                    .foregroundStyle(.secondary)
-                                    .help(L10n.tr("包含通话录音"))
-                            }
-                        }
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
-                        .communicationSelectionHighlight(selectedRecordID == record.id)
-                        .onTapGesture { selectedRecordID = record.id }
-                        .accessibilityAddTraits(selectedRecordID == record.id ? .isSelected : [])
-                        .tag(record.id)
-                        .contextMenu {
-                            Button("回拨", systemImage: "phone") {
-                                call(record)
-                            }
-                            .disabled(!canDial(record))
-                            Button("发短信", systemImage: "message") {
-                                appState.showMessagesWindow(destination: record.number)
-                            }
-                            Divider()
-                            Button("删除记录", systemImage: "trash", role: .destructive) {
-                                history.delete(record)
-                            }
-                        }
                         }
                     }
                     .listStyle(.sidebar)
@@ -1178,6 +1186,7 @@ private struct RecentCallsView: View {
         }
         .onChange(of: missedOnly) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: searchText) { _, _ in ensureSelectionIsVisible() }
+        .onChange(of: lineFilter) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: history.records) { _, _ in ensureSelectionIsVisible() }
         .confirmationDialog(
             "清除所有最近通话？",
@@ -1191,15 +1200,37 @@ private struct RecentCallsView: View {
         }
     }
 
-    private var filteredRecords: [CallHistoryRecord] {
-        let base = missedOnly ? history.records.filter(\.isMissed) : history.records
+    /// Every line that carried a call, ordered by module and SIM slot.
+    private static func filterLines(
+        in records: [CallHistoryRecord],
+        resolver: LineAppearanceResolver
+    ) -> [LineAppearance] {
+        var seen = Set<CommunicationLine>()
+        return records
+            .compactMap(\.line)
+            .filter { seen.insert($0).inserted }
+            .map { resolver.appearance(for: $0) }
+            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
+    }
+
+    private func filteredRecords(availableLines: [LineAppearance]) -> [CallHistoryRecord] {
+        let activeFilter = availableLines.contains { $0.line == lineFilter } ? lineFilter : nil
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return base }
-        return base.filter { record in
-            record.number.localizedCaseInsensitiveContains(query) ||
+        return history.records.filter { record in
+            if missedOnly, !record.isMissed { return false }
+            if let activeFilter, record.line != activeFilter { return false }
+            guard !query.isEmpty else { return true }
+            return record.number.localizedCaseInsensitiveContains(query) ||
                 (contacts.displayName(for: record.number) ?? "")
                     .localizedCaseInsensitiveContains(query)
         }
+    }
+
+    private var filteredRecords: [CallHistoryRecord] {
+        filteredRecords(availableLines: Self.filterLines(
+            in: history.records,
+            resolver: appState.lineAppearanceResolver
+        ))
     }
 
     private func selectInitialRecordIfNeeded() {
@@ -1218,6 +1249,7 @@ private struct RecentCallsView: View {
             return
         }
         searchText = ""
+        lineFilter = nil
         missedOnly = true
         selectedRecordID = recordID
         guard let proxy else { return }
@@ -1229,11 +1261,12 @@ private struct RecentCallsView: View {
     }
 
     private func ensureSelectionIsVisible() {
+        let visible = filteredRecords
         if let selectedRecordID,
-           filteredRecords.contains(where: { $0.id == selectedRecordID }) {
+           visible.contains(where: { $0.id == selectedRecordID }) {
             return
         }
-        selectedRecordID = filteredRecords.first?.id
+        selectedRecordID = visible.first?.id
     }
 
     private func handleFocusFirstItemRequest() {
@@ -1246,35 +1279,6 @@ private struct RecentCallsView: View {
         }
     }
 
-    private func iconName(_ record: CallHistoryRecord) -> String {
-        if record.isMissed { return "phone.arrow.down.left.fill" }
-        return record.direction == .incoming
-            ? "phone.arrow.down.left.fill"
-            : "phone.arrow.up.right.fill"
-    }
-
-    private func callEndReasonText(
-        _ record: CallHistoryRecord,
-        reason: CallEndReason
-    ) -> String {
-        if record.isMissed, reason == .remoteHangup {
-            return L10n.tr("已挂断")
-        }
-        return reason.localizedDescription
-    }
-
-    private func iconTint(_ record: CallHistoryRecord) -> Color {
-        if record.isMissed { return .red }
-        return record.direction == .incoming ? .blue : .green
-    }
-
-    private func formattedDuration(_ duration: TimeInterval) -> String {
-        let total = max(0, Int(duration.rounded()))
-        let minutes = total / 60
-        let seconds = total % 60
-        return String(format: "%d:%02d", minutes, seconds)
-    }
-
     private func matchingRecording(
         for record: CallHistoryRecord
     ) -> CallRecordingRecord? {
@@ -1282,25 +1286,30 @@ private struct RecentCallsView: View {
         return recordings.records.first { $0.id == recordingID }
     }
 
-    private func canDial(_ record: CallHistoryRecord) -> Bool {
-        appState.moduleCanDial(nil) &&
+    /// A callback goes out on the line the call came through when that line
+    /// is live, otherwise on the current module.
+    private func callbackModule(
+        for record: CallHistoryRecord,
+        resolver: LineAppearanceResolver
+    ) -> CellularModuleID? {
+        resolver.defaultSendModule(
+            lastLine: record.line,
+            current: appState.currentCommunicationModuleID
+        ).moduleID
+    }
+
+    private func canDial(_ record: CallHistoryRecord, resolver: LineAppearanceResolver) -> Bool {
+        guard let moduleID = callbackModule(for: record, resolver: resolver) else { return false }
+        return appState.moduleCanDial(moduleID) &&
             !appState.isChangingCall &&
             CallATParser.normalizedDialNumber(record.number) != nil
     }
 
-    private func call(_ record: CallHistoryRecord) {
-        guard canDial(record) else { return }
+    private func call(_ record: CallHistoryRecord, resolver: LineAppearanceResolver) {
+        guard canDial(record, resolver: resolver),
+              let moduleID = callbackModule(for: record, resolver: resolver) else { return }
         model.dialNumber = record.number
-        appState.dial(record.number)
-    }
-
-    private func moduleName(_ record: CallHistoryRecord) -> String? {
-        guard let moduleID = record.moduleID,
-              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.localizedDisplayName else {
-            return nil
-        }
-        guard let simSlot = record.simSlot else { return name }
-        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
+        appState.dial(record.number, via: moduleID)
     }
 
     private func presentedIdentity(_ record: CallHistoryRecord) -> String {
@@ -1308,6 +1317,33 @@ private struct RecentCallsView: View {
             contactName: contacts.displayName(for: record.number),
             number: record.number
         )
+    }
+}
+
+/// Texts shared by the Recents list and its detail pane.
+enum RecentCallText {
+    /// "呼入 · 2:35" for an answered call, the reason it ended otherwise.
+    static func status(_ record: CallHistoryRecord) -> String {
+        if record.isMissed { return L10n.tr("未接来电") }
+        let direction = record.direction == .incoming ? L10n.tr("呼入") : L10n.tr("呼出")
+        if record.duration > 0 {
+            return "\(direction) · \(duration(record.duration))"
+        }
+        guard let reason = record.endReason else { return direction }
+        return "\(direction) · \(reason.localizedDescription)"
+    }
+
+    static func duration(_ duration: TimeInterval) -> String {
+        let total = max(0, Int(duration.rounded()))
+        if total >= 3_600 {
+            return String(
+                format: "%d:%02d:%02d",
+                total / 3_600,
+                (total / 60) % 60,
+                total % 60
+            )
+        }
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 
@@ -1319,31 +1355,41 @@ private struct RecentCallDetailView: View {
     @ObservedObject var contacts: SystemContactStore
     let selectedRecordID: CallHistoryRecord.ID?
 
+    /// The line the user picked for the callback; nil follows the default.
+    @State private var chosenModuleID: CellularModuleID?
+
+    private static let historyLimit = 50
+
     var body: some View {
         Group {
             if let record = selectedRecord {
-                GeometryReader { proxy in
-                    let compact = proxy.size.height < 560
+                let resolver = appState.lineAppearanceResolver
+                ScrollView {
+                    AdaptiveGlassContainer(spacing: 14) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            identityHeader(record, line: resolver.appearance(for: record.line))
+                            actionBar(record, resolver: resolver)
 
-                    ScrollView {
-                        VStack {
-                            Spacer(minLength: compact ? 14 : 24)
+                            DetailSectionCaption(title: L10n.tr("本次通话"))
+                                .padding(.top, 8)
+                            callCard(record, line: resolver.appearance(for: record.line))
 
-                            AdaptiveGlassContainer(spacing: compact ? 8 : 12) {
-                                detailCard(record, compact: compact)
-                                    .frame(maxWidth: 380)
+                            let related = relatedRecords(to: record)
+                            if related.count > 1 {
+                                DetailSectionCaption(title: L10n.tr(
+                                    "与此号码的全部通话（%lld 次）",
+                                    Int64(related.count)
+                                ))
+                                .padding(.top, 8)
+                                historyCard(related, selected: record, resolver: resolver)
                             }
-
-                            Spacer(minLength: compact ? 14 : 24)
                         }
-                        .padding(.horizontal, compact ? 14 : 24)
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: max(0, proxy.size.height)
-                        )
+                        .padding(24)
+                        .frame(maxWidth: 560, alignment: .leading)
                     }
-                    .scrollIndicators(.never)
+                    .frame(maxWidth: .infinity)
                 }
+                .scrollContentBackground(.hidden)
             } else {
                 PhoneEmptyState(
                     title: "选择一条通话记录",
@@ -1353,168 +1399,202 @@ private struct RecentCallDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func detailCard(
-        _ record: CallHistoryRecord,
-        compact: Bool
-    ) -> some View {
-        VStack(spacing: compact ? 12 : 16) {
-            identityHeader(record, compact: compact)
-
-            Divider()
-
-            VStack(spacing: 0) {
-                informationRow(
-                    title: "手机号码",
-                    value: appState.privacyPresentation.phoneNumber(record.number),
-                    systemImage: "phone"
-                )
-                Divider()
-                informationRow(
-                    title: "通话时间",
-                    value: Self.detailDateFormatter.string(from: record.startedAt),
-                    systemImage: "calendar"
-                )
-                Divider()
-                informationRow(
-                    title: "通话时长",
-                    value: durationText(record),
-                    systemImage: "clock"
-                )
-                if let moduleName = moduleName(record) {
-                    Divider()
-                    informationRow(
-                        title: "SIM 路由",
-                        value: moduleName,
-                        systemImage: "simcard"
-                    )
-                }
-            }
-
-            actionBar(record, compact: compact)
+        .onChange(of: selectedRecordID) { _, _ in
+            chosenModuleID = nil
         }
-        .adaptiveGlassSurface(
-            cornerRadius: compact ? 22 : 26,
-            padding: compact ? 20 : 26,
-            treatment: .regular
-        )
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(L10n.tr("%@，%@", directionLabel(record), displayName(record)))
     }
 
     private func identityHeader(
         _ record: CallHistoryRecord,
-        compact: Bool
+        line: LineAppearance
     ) -> some View {
-        let tint = directionTint(record)
-        let iconSize: CGFloat = compact ? 68 : 82
-
-        return VStack(spacing: compact ? 5 : 7) {
-            ZStack {
-                Circle()
-                    .fill(tint.opacity(0.10))
-
-                Image(systemName: directionIcon(record))
-                    .font(.system(
-                        size: iconSize * 0.38,
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(tint)
-            }
-            .frame(width: iconSize, height: iconSize)
-            .adaptiveGlassSurface(
-                cornerRadius: iconSize / 2,
-                treatment: .clear,
-                tint: tint.opacity(0.06)
+        HStack(spacing: 18) {
+            ContactFaceAvatar(
+                address: record.number,
+                size: AppMetrics.Avatar.hero,
+                tint: line.tint,
+                badgeText: line.badgeText
             )
-            .accessibilityHidden(true)
 
-            Text(displayName(record))
-                .font(.system(
-                    size: compact ? 24 : 27,
-                    weight: .semibold
-                ))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayName(record))
+                    .font(.appTitle)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
-            Text(appState.privacyPresentation.phoneNumber(record.number))
-                .font(.title3.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.78)
-                .textSelection(.enabled)
+                Text(appState.privacyPresentation.phoneNumber(record.number))
+                    .font(.appBody)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .textSelection(.enabled)
+            }
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L10n.tr("%@，%@", directionLabel(record), displayName(record)))
     }
 
-    private func informationRow(
-        title: String,
-        value: String,
-        systemImage: String
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-
-            Text(L10n.tr(title))
-                .foregroundStyle(.secondary)
-
-            Spacer(minLength: 14)
-
-            Text(value)
-                .multilineTextAlignment(.trailing)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .textSelection(.enabled)
-        }
-        .font(.callout)
-        .frame(height: 44)
-    }
-
-    @ViewBuilder
     private func actionBar(
         _ record: CallHistoryRecord,
-        compact: Bool
+        resolver: LineAppearanceResolver
     ) -> some View {
-        let recording = matchingRecording(record)
+        let options = resolver.sendOptions
+        let moduleID = callbackModule(for: record, resolver: resolver, options: options)
+        let option = options.first { $0.moduleID == moduleID }
 
-        HStack(spacing: compact ? 10 : 12) {
-            RecentCallDetailAction(
-                title: "回拨",
-                systemImage: "phone",
-                isEnabled: canDial(record),
-                compact: compact
-            ) {
-                call(record)
+        return HStack(spacing: 8) {
+            Menu {
+                ForEach(options) { candidate in
+                    Button {
+                        chosenModuleID = candidate.moduleID
+                    } label: {
+                        if candidate.moduleID == moduleID {
+                            Label(candidate.menuTitle, systemImage: "checkmark")
+                        } else {
+                            Text(verbatim: candidate.menuTitle)
+                        }
+                    }
+                    .disabled(!candidate.isEligible)
+                }
+            } label: {
+                Label {
+                    Text(verbatim: option.map { L10n.tr("用 %@ 回拨", $0.appearance.title) }
+                        ?? L10n.tr("回拨"))
+                } icon: {
+                    Image(systemName: "phone.fill")
+                }
+                .font(.appBody.weight(.medium))
+            } primaryAction: {
+                call(record, via: moduleID)
             }
+            .menuStyle(.button)
+            .adaptiveGlassButton(.prominent)
+            .tint(option?.appearance.tint.solid ?? Color.accentColor)
+            .fixedSize()
+            .disabled(!canDial(record, via: moduleID))
+            .help(option?.appearance.fullTitle ?? L10n.tr("回拨"))
 
-            RecentCallDetailAction(
-                title: "发信息",
-                systemImage: "message",
-                compact: compact
-            ) {
+            Button {
                 appState.showMessagesWindow(destination: record.number)
+            } label: {
+                Label("发信息", systemImage: "message")
+                    .font(.appBody.weight(.medium))
             }
+            .adaptiveGlassButton()
 
-            if let recording {
-                RecentCallDetailAction(
-                    title: "查看录音",
-                    systemImage: "waveform",
-                    compact: compact
-                ) {
+            if let recording = matchingRecording(record) {
+                Button {
                     model.selectedRecordingID = recording.id
                     model.activateFromRail(.recordings)
+                } label: {
+                    Label("查看录音", systemImage: "waveform")
+                        .font(.appBody.weight(.medium))
                 }
+                .adaptiveGlassButton()
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func callCard(
+        _ record: CallHistoryRecord,
+        line: LineAppearance
+    ) -> some View {
+        VStack(spacing: 0) {
+            DetailFieldRow(title: L10n.tr("类型")) {
+                Text(directionLabel(record))
+                    .foregroundStyle(record.isMissed ? Color.red : Color.primary)
+            }
+            Divider()
+            DetailFieldRow(title: L10n.tr("通话时间")) {
+                Text(Self.detailDateFormatter.string(from: record.startedAt))
+                    .monospacedDigit()
+                    .textSelection(.enabled)
+            }
+            Divider()
+            DetailFieldRow(title: L10n.tr("通话时长")) {
+                Text(durationText(record))
+                    .monospacedDigit()
+            }
+            Divider()
+            DetailFieldRow(title: L10n.tr("线路")) {
+                LineFieldValue(appearance: line)
             }
         }
+        .padding(.horizontal, 14)
+        .adaptiveGlassSurface(
+            cornerRadius: AppMetrics.Radius.card,
+            padding: 0,
+            treatment: .regular
+        )
+        .accessibilityElement(children: .contain)
+    }
+
+    private func historyCard(
+        _ related: [CallHistoryRecord],
+        selected: CallHistoryRecord,
+        resolver: LineAppearanceResolver
+    ) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(related.prefix(Self.historyLimit).enumerated()), id: \.element.id) { index, item in
+                if index > 0 { Divider().padding(.leading, 14) }
+                let line = resolver.appearance(for: item.line)
+                Button {
+                    model.selectedCallRecordID = item.id
+                } label: {
+                    HStack(spacing: 6) {
+                        CallDirectionGlyph(direction: item.direction, isMissed: item.isMissed)
+                        Text(verbatim: RecentCallText.status(item))
+                            .font(.appBody)
+                            .monospacedDigit()
+                            .foregroundStyle(item.isMissed ? Color.red : Color.primary)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        if let badgeText = line.badgeText {
+                            LineBadge(text: badgeText, color: line.tint.solid)
+                                .help(line.fullTitle)
+                        }
+                        Text(verbatim: Self.historyDateFormatter.string(from: item.startedAt))
+                            .font(.appCaption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 96, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: AppMetrics.Row.single)
+                    .contentShape(Rectangle())
+                    .background {
+                        if item.id == selected.id {
+                            Color.accentColor.opacity(0.12)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(item.id == selected.id ? .isSelected : [])
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.Radius.card, style: .continuous))
+        .adaptiveGlassSurface(
+            cornerRadius: AppMetrics.Radius.card,
+            padding: 0,
+            treatment: .regular
+        )
     }
 
     private var selectedRecord: CallHistoryRecord? {
         guard let selectedRecordID else { return nil }
         return history.records.first { $0.id == selectedRecordID }
+    }
+
+    /// Every call with the same number, on any line, newest first.
+    private func relatedRecords(to record: CallHistoryRecord) -> [CallHistoryRecord] {
+        let key = PhoneNumberNormalizer.conversationID(for: record.number)
+        guard !key.isEmpty else { return [record] }
+        return history.records
+            .filter { PhoneNumberNormalizer.conversationID(for: $0.number) == key }
+            .sorted { $0.startedAt > $1.startedAt }
     }
 
     private func matchingRecording(
@@ -1532,18 +1612,6 @@ private struct RecentCallDetailView: View {
         )
     }
 
-    private func directionIcon(_ record: CallHistoryRecord) -> String {
-        if record.isMissed { return "phone.down.fill" }
-        return record.direction == .incoming
-            ? "phone.arrow.down.left.fill"
-            : "phone.arrow.up.right.fill"
-    }
-
-    private func directionTint(_ record: CallHistoryRecord) -> Color {
-        if record.isMissed { return .red }
-        return record.direction == .incoming ? .blue : .green
-    }
-
     private func directionLabel(_ record: CallHistoryRecord) -> String {
         if record.isMissed { return L10n.tr("未接来电") }
         return record.direction == .incoming
@@ -1553,37 +1621,37 @@ private struct RecentCallDetailView: View {
 
     private func durationText(_ record: CallHistoryRecord) -> String {
         guard record.duration > 0 else { return L10n.tr("未接通") }
-        let total = max(0, Int(record.duration.rounded()))
-        if total >= 3_600 {
-            return String(
-                format: "%d:%02d:%02d",
-                total / 3_600,
-                (total / 60) % 60,
-                total % 60
-            )
-        }
-        return String(format: "%d:%02d", total / 60, total % 60)
+        return RecentCallText.duration(record.duration)
     }
 
-    private func canDial(_ record: CallHistoryRecord) -> Bool {
-        appState.moduleCanDial(nil) &&
+    /// The user's pick while that module can still dial, otherwise the line
+    /// the call came through when it is live, otherwise the current module.
+    private func callbackModule(
+        for record: CallHistoryRecord,
+        resolver: LineAppearanceResolver,
+        options: [SendLineOption]
+    ) -> CellularModuleID? {
+        if let chosenModuleID,
+           options.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
+            return chosenModuleID
+        }
+        return resolver.defaultSendModule(
+            lastLine: record.line,
+            current: appState.currentCommunicationModuleID
+        ).moduleID
+    }
+
+    private func canDial(_ record: CallHistoryRecord, via moduleID: CellularModuleID?) -> Bool {
+        guard let moduleID else { return false }
+        return appState.moduleCanDial(moduleID) &&
             !appState.isChangingCall &&
             CallATParser.normalizedDialNumber(record.number) != nil
     }
 
-    private func call(_ record: CallHistoryRecord) {
-        guard canDial(record) else { return }
+    private func call(_ record: CallHistoryRecord, via moduleID: CellularModuleID?) {
+        guard canDial(record, via: moduleID), let moduleID else { return }
         model.dialNumber = record.number
-        appState.dial(record.number)
-    }
-
-    private func moduleName(_ record: CallHistoryRecord) -> String? {
-        guard let moduleID = record.moduleID,
-              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.displayName else {
-            return nil
-        }
-        guard let simSlot = record.simSlot else { return name }
-        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
+        appState.dial(record.number, via: moduleID)
     }
 
     private static var detailDateFormatter: DateFormatter {
@@ -1592,53 +1660,12 @@ private struct RecentCallDetailView: View {
         formatter.setLocalizedDateFormatFromTemplate("yMMMdjmm")
         return formatter
     }
-}
 
-private struct RecentCallDetailAction: View {
-    let title: String
-    let systemImage: String
-    var isEnabled = true
-    let compact: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: compact ? 4 : 5) {
-                Image(systemName: systemImage)
-                    .font(.system(
-                        size: compact ? 17 : 19,
-                        weight: .semibold
-                    ))
-                    .foregroundStyle(.primary)
-                    .frame(
-                        width: compact ? 28 : 32,
-                        height: compact ? 28 : 32
-                    )
-
-                Text(L10n.tr(title))
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: compact ? 58 : 64)
-            .contentShape(
-                RoundedRectangle(
-                    cornerRadius: compact ? 14 : 16,
-                    style: .continuous
-                )
-            )
-        }
-        .buttonStyle(CallControlPressStyle())
-        .adaptiveGlassSurface(
-            cornerRadius: compact ? 14 : 16,
-            treatment: .clear,
-            isInteractive: isEnabled
-        )
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.46)
-        .help(L10n.tr(title))
-        .accessibilityLabel(L10n.tr(title))
+    private static var historyDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = AppLanguage.storedPreference.locale
+        formatter.setLocalizedDateFormatFromTemplate("MMMdjmm")
+        return formatter
     }
 }
 

@@ -23,6 +23,29 @@ final class AppState: ObservableObject {
     @Published private(set) var modem = ModemSnapshot()
     @Published private(set) var euicc = EUICCSnapshot.empty
     @Published private(set) var network = CellularNetworkStatus()
+    /// Colour and number of every module this Mac has seen, so history keeps
+    /// its line badge after a module is unplugged.
+    @Published private(set) var moduleAppearanceRegistry = ModuleAppearanceRegistry.load()
+
+    private func refreshModuleAppearanceRegistry() {
+        let attached = cellularModules.enumerated().map { index, module in
+            ModuleAppearanceRegistry.AttachedModule(
+                id: module.id,
+                number: index + 1,
+                imei: module.modem.moduleIMEI
+            )
+        }
+        var registry = moduleAppearanceRegistry
+        guard registry.update(attached: attached) else { return }
+        moduleAppearanceRegistry = registry
+        registry.save()
+    }
+
+    /// Resolves lines for one view update; reuse it for every row.
+    var lineAppearanceResolver: LineAppearanceResolver {
+        LineAppearanceResolver(modules: cellularModules, registry: moduleAppearanceRegistry)
+    }
+
     @Published private(set) var networkStatusesByModuleID:
         [CellularModuleID: CellularNetworkStatus] = [:]
     @Published private(set) var discoveredModemDevices: [DiscoveredModemDevice] = []
@@ -259,6 +282,9 @@ final class AppState: ObservableObject {
     }
 
     private func rememberModuleIdentity(of snapshot: ModemSnapshot) {
+        // Runs on every inventory and snapshot update, which is exactly when a
+        // module's number or IMEI can change.
+        defer { refreshModuleAppearanceRegistry() }
         guard snapshot.isConnected,
               let locationID = snapshot.usbLocationID,
               let device = discoveredModemDevices.first(where: { $0.locationID == locationID }) else {
@@ -2475,8 +2501,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    func dial(_ number: String) {
-        let moduleID = communicationModuleID()
+    func dial(_ number: String, via requestedModuleID: CellularModuleID? = nil) {
+        let moduleID = communicationModuleID(requested: requestedModuleID)
         guard let service = modemService(for: moduleID) else {
             presentTransientMessage(L10n.tr("当前通信模组尚未就绪。"), isError: true)
             return
@@ -2550,7 +2576,9 @@ final class AppState: ObservableObject {
             localNumber: call.moduleID.map(moduleSnapshot(for:))?.simPhoneNumber,
             number: call.number ?? "",
             direction: call.direction ?? .outgoing,
-            callID: callHistory.currentCallID(for: call.moduleID)
+            callID: callHistory.currentCallID(for: call.moduleID),
+            moduleID: call.moduleID,
+            simSlot: call.moduleID.flatMap(simSlotForNewRecord(on:))
         )
         if let error = callRecordings.lastError {
             presentTransientMessage(L10n.tr("无法开始通话录音：%@", error), isError: true)
