@@ -303,8 +303,13 @@ private struct ConversationRow: View {
     }
 
     private var moduleName: String? {
-        guard let moduleID = conversation.moduleID else { return nil }
-        return appState.cellularModules.first(where: { $0.id == moduleID })?.displayName
+        guard let moduleID = conversation.moduleID,
+              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.displayName else {
+            return nil
+        }
+        // Conversations group by module; show the card of the latest message.
+        guard let simSlot = conversation.latestMessage?.simSlot else { return name }
+        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
     }
 
     private var presentedIdentity: String {
@@ -537,7 +542,9 @@ private struct MessageThreadView: View {
             return L10n.tr("未选择通信模组")
         }
         return module.isCommunicationEligible
-            ? L10n.tr("通过 %@ 发送", module.displayName)
+            ? L10n.tr("通过 %@ 发送", [module.displayName, module.simSlotTitle]
+                .compactMap { $0 }
+                .joined(separator: " · "))
             : L10n.tr("当前模组未就绪")
     }
 

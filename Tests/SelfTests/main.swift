@@ -1182,6 +1182,33 @@ do {
     try expect(legacyMessage.direction == nil, "legacy JSON synthesized a message direction")
     try expect(legacyMessage.deliveryState == nil, "legacy JSON synthesized a delivery state")
     try expect(legacyMessage.effectiveModemReferences.count == 1, "legacy JSON reference fallback")
+    try expect(legacyMessage.simSlot == nil, "legacy JSON synthesized a SIM slot")
+
+    // A message kept in module storage survives a SIM slot switch and must
+    // keep the slot recorded when it was first seen, including nil.
+    var slotOneMessage = storedMessage
+    slotOneMessage.simSlot = 1
+    var reseenOnSlotTwo = storedMessage
+    reseenOnSlotTwo.simSlot = 2
+    let slotMerge = SMSMessageMerger.merge(existing: [slotOneMessage], incoming: [reseenOnSlotTwo])
+    try expect(
+        slotMerge.messages.first(where: { $0.id == storedMessage.id })?.simSlot == 1,
+        "merge relabelled a known message with the new SIM slot"
+    )
+    var untaggedMessage = storedMessage
+    untaggedMessage.simSlot = nil
+    let untaggedMerge = SMSMessageMerger.merge(existing: [untaggedMessage], incoming: [reseenOnSlotTwo])
+    try expect(
+        untaggedMerge.messages.first(where: { $0.id == storedMessage.id })?.simSlot == nil,
+        "merge assigned a SIM slot to a message first seen without one"
+    )
+    var newOnSlotTwo = unrelatedMessage
+    newOnSlotTwo.simSlot = 2
+    let newSlotMerge = SMSMessageMerger.merge(existing: [slotOneMessage], incoming: [newOnSlotTwo])
+    try expect(
+        newSlotMerge.messages.first(where: { $0.id == unrelatedMessage.id })?.simSlot == 2,
+        "merge dropped the SIM slot of a newly discovered message"
+    )
 
     var storageSync = MessageStorageSyncTracker()
     try expect(storageSync.markSuccessfulPoll(of: "SM"), "first SM poll was not initial")
@@ -1565,6 +1592,46 @@ do {
         "unknown DJI interface tuple was offered conversion"
     )
     try expect(ATResponseParser.parseCSQ("+CSQ: 20,99\r\nOK") == -73, "CSQ conversion")
+    try expect(ATResponseParser.parseSIMSlot("\r\n+QUIMSLOT: 1\r\n\r\nOK\r\n") == 1, "QUIMSLOT slot 1")
+    try expect(
+        ATResponseParser.parseSIMSlot("AT+QUIMSLOT?\r\n+QUIMSLOT: 2\r\nOK") == 2,
+        "QUIMSLOT slot 2 with echo"
+    )
+    try expect(ATResponseParser.parseSIMSlot("\r\nERROR\r\n") == nil, "QUIMSLOT ERROR parsed as a slot")
+    try expect(
+        ATResponseParser.parseSIMSlot("\r\n+CME ERROR: operation not supported\r\n") == nil,
+        "QUIMSLOT CME ERROR parsed as a slot"
+    )
+    try expect(ATResponseParser.parseSIMSlot("+QUIMSLOT: abc\r\nOK") == nil, "QUIMSLOT garbage parsed")
+    try expect(ATResponseParser.parseSIMSlot("garbage") == nil, "unrelated response parsed as a slot")
+    try expect(ATResponseParser.parseSIMSlot("+QUIMSLOT: 0\r\nOK") == nil, "QUIMSLOT slot 0 accepted")
+    try expect(ATResponseParser.parseSIMSlot("+QUIMSLOT: 3\r\nOK") == nil, "QUIMSLOT slot 3 accepted")
+
+    try expect(
+        SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots("RM520NGLAAR03A03M4G") &&
+            SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots(" rm520nglaar01a08m4g\n"),
+        "RM520N firmware was not recognised as dual-slot"
+    )
+    try expect(
+        !SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots("EG25GGBR07A08M2G"),
+        "EG25 firmware was treated as dual-slot"
+    )
+    try expect(!SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots(nil), "nil firmware was treated as dual-slot")
+    try expect(!SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots("  "), "blank firmware was treated as dual-slot")
+    try expect(
+        SIMSlotSwitchingPolicy.isSupported(firmwareVersion: "RM520NGLAAR03A03M4G", reportedSlot: 2),
+        "RM520N with a reported slot was not supported"
+    )
+    try expect(
+        !SIMSlotSwitchingPolicy.isSupported(firmwareVersion: "EG25GGBR07A08M2G", reportedSlot: 1),
+        "EG25 answering QUIMSLOT was treated as dual-slot"
+    )
+    try expect(
+        !SIMSlotSwitchingPolicy.isSupported(firmwareVersion: nil, reportedSlot: 1) &&
+            !SIMSlotSwitchingPolicy.isSupported(firmwareVersion: "RM520NGLAAR03A03M4G", reportedSlot: nil),
+        "SIM slot switching was supported without firmware or a reported slot"
+    )
+    try expect(ModemSnapshot().simSlotSwitchingSupported == false, "snapshot defaulted to slot switching")
     try expect(
         ATResponseParser.parseIMSMode("+QCFG: \"ims\",0,1\r\nOK") == 0,
         "IMS mode zero parsing"

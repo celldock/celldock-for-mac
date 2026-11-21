@@ -116,6 +116,19 @@ enum ATResponseParser {
         return value == 1
     }
 
+    /// Parses `+QUIMSLOT: <n>` and accepts only the two physical slots.
+    static func parseSIMSlot(_ response: String) -> Int? {
+        guard let line = normalizedLines(response).first(where: {
+            $0.uppercased().hasPrefix("+QUIMSLOT:")
+        }) else {
+            return nil
+        }
+        let payload = line.dropFirst("+QUIMSLOT:".count)
+            .trimmingCharacters(in: .whitespaces)
+        guard let slot = Int(payload), slot == 1 || slot == 2 else { return nil }
+        return slot
+    }
+
     static func parseSIMReady(_ response: String) -> Bool {
         parseSIMState(response) == .ready
     }

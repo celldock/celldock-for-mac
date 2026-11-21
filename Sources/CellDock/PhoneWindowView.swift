@@ -1295,8 +1295,12 @@ private struct RecentCallsView: View {
     }
 
     private func moduleName(_ record: CallHistoryRecord) -> String? {
-        guard let moduleID = record.moduleID else { return nil }
-        return appState.cellularModules.first(where: { $0.id == moduleID })?.localizedDisplayName
+        guard let moduleID = record.moduleID,
+              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.localizedDisplayName else {
+            return nil
+        }
+        guard let simSlot = record.simSlot else { return name }
+        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
     }
 
     private func presentedIdentity(_ record: CallHistoryRecord) -> String {
@@ -1574,8 +1578,12 @@ private struct RecentCallDetailView: View {
     }
 
     private func moduleName(_ record: CallHistoryRecord) -> String? {
-        guard let moduleID = record.moduleID else { return nil }
-        return appState.cellularModules.first(where: { $0.id == moduleID })?.displayName
+        guard let moduleID = record.moduleID,
+              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.displayName else {
+            return nil
+        }
+        guard let simSlot = record.simSlot else { return name }
+        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
     }
 
     private static var detailDateFormatter: DateFormatter {

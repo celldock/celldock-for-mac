@@ -1686,3 +1686,35 @@
 "飞书" = "Feishu";
 "正在启用…" = "Enabling…";
 "正在停用…" = "Disabling…";
+
+/* SIM slot switching */
+"卡槽" = "SIM Slot";
+"卡槽 %lld" = "Slot %lld";
+" · 卡 %lld" = " · SIM %lld";
+"卡槽 %lld（共 %lld 个）" = "Slot %lld (of %lld)";
+"同一时间只有一张卡在线" = "Only one SIM is online at a time";
+"切换中" = "Switching";
+"已离线" = "Offline";
+"正在重新读取 SIM 卡" = "Reading the SIM card again";
+"大约需要 3 到 5 秒" = "This takes about 3 to 5 seconds";
+"切换后读取这张卡的运营商和号码" = "The carrier and number of this SIM are read after switching";
+"切换到卡槽 %lld" = "Switch to Slot %lld";
+"切换到卡槽 %lld？" = "Switch to Slot %lld?";
+"切换" = "Switch";
+"卡槽 %lld 会离线，切回之前它收不到来电和短信。蜂窝网络会中断几秒，然后用卡槽 %lld 重新连接。" = "Slot %lld goes offline and can’t receive calls or messages until you switch back. Cellular data drops for a few seconds, then reconnects with slot %lld.";
+"切换期间蜂窝网络和短信会短暂中断。通话中或 eSIM 操作进行时不能切换。" = "Cellular data and messages pause briefly while switching. You can’t switch during a call or an eSIM operation.";
+"通话或语音清理期间不能切换 SIM 卡槽。" = "The SIM slot can’t be switched during a call or voice cleanup.";
+"eSIM 操作期间不能切换 SIM 卡槽。" = "The SIM slot can’t be switched during an eSIM operation.";
+"通话期间不能切换 SIM 卡槽。" = "The SIM slot can’t be switched during a call.";
+"这个模组不支持切换 SIM 卡槽。" = "This module doesn’t support switching SIM slots.";
+"卡槽编号无效。" = "Invalid slot number.";
+"无法读取当前 SIM 卡槽，未执行切换。" = "Unable to read the current SIM slot, switch not performed.";
+"已在使用卡槽 %lld。" = "Slot %lld is already in use.";
+"模块拒绝切换 SIM 卡槽。" = "The module refused to switch SIM slots.";
+"切换卡槽后的回读校验失败。" = "The readback verification after switching slots failed.";
+"已切换到卡槽 %lld。" = "Switched to slot %lld.";
+"已切换到卡槽 %lld，但没有检测到 SIM 卡。可以切换回原来的卡槽。" = "Switched to slot %lld, but no SIM card was detected. You can switch back to the previous slot.";
+"已切换到卡槽 %lld，这张 SIM 卡已锁定。" = "Switched to slot %lld. This SIM card is locked.";
+"已切换到卡槽 %lld，SIM 卡仍在读取。" = "Switched to slot %lld. The SIM card is still being read.";
+"正在修复蜂窝网络连接，请稍后再切换卡槽。" = "The cellular connection is being repaired. Try switching slots again later.";
+"正在切换 SIM 卡槽，请稍后再发送短信。" = "The SIM slot is being switched. Send the message again in a moment.";

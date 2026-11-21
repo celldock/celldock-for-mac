@@ -68,6 +68,7 @@ final class MessageStore: ObservableObject {
         to destination: String,
         body: String,
         moduleID: CellularModuleID? = nil,
+        simSlot: Int? = nil,
         at date: Date = Date()
     ) -> SMSMessage.ID {
         let message = SMSMessage(
@@ -82,7 +83,8 @@ final class MessageStore: ObservableObject {
             readAt: date,
             firstSeenAt: date,
             direction: .outgoing,
-            deliveryState: .sending
+            deliveryState: .sending,
+            simSlot: simSlot
         )
         messages.insert(message, at: 0)
         save()

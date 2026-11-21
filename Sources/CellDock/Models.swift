@@ -207,6 +207,32 @@ struct ModemUSBConfiguration: Equatable {
     }
 }
 
+/// Decides which modules may use AT+QUIMSLOT. Single-slot modules such as the
+/// EG25 can still answer the command, so support is gated on the firmware
+/// identity first and the command is never sent to other modules.
+enum SIMSlotSwitchingPolicy {
+    static let slotCount = 2
+    static let dualSlotFirmwarePrefixes = ["RM520N"]
+
+    static func firmwareMayHaveDualSlots(_ firmwareVersion: String?) -> Bool {
+        guard let identity = firmwareVersion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased(),
+              !identity.isEmpty else {
+            return false
+        }
+        return dualSlotFirmwarePrefixes.contains { identity.hasPrefix($0.uppercased()) }
+    }
+
+    static func isSupported(firmwareVersion: String?, reportedSlot: Int?) -> Bool {
+        guard firmwareMayHaveDualSlots(firmwareVersion),
+              let reportedSlot else {
+            return false
+        }
+        return (1 ... slotCount).contains(reportedSlot)
+    }
+}
+
 struct ModemSnapshot: Equatable {
     var state: ModemConnectionState = .disconnected
     var lifecyclePhase: ModemLifecyclePhase = .normal
@@ -240,6 +266,10 @@ struct ModemSnapshot: Equatable {
     var usbConfiguration: ModemUSBConfiguration?
     var endpointDescription: String?
     var lastError: String?
+    /// Active SIM slot (1-based) reported by AT+QUIMSLOT? on dual-slot modules.
+    var simSlot: Int?
+    /// True only for known dual-slot firmware that also answered AT+QUIMSLOT?.
+    var simSlotSwitchingSupported: Bool = false
 
     var signalBars: Int {
         guard let signalDBm else { return 0 }
@@ -1061,6 +1091,9 @@ struct SMSMessage: Identifiable, Codable, Equatable {
     var direction: SMSDirection? = nil
     var deliveryState: SMSDeliveryState? = nil
     var deliveryDetail: String? = nil
+    /// SIM slot that was active when CellDock first saw this message. Nil for
+    /// single-slot modules and for messages stored before slot tracking.
+    var simSlot: Int? = nil
 
     var isOutgoing: Bool {
         direction == .outgoing
@@ -1189,6 +1222,9 @@ enum SMSMessageMerger {
                 candidate.readAt = previous.readAt
                 candidate.timestamp = previous.timestamp
                 candidate.firstSeenAt = previous.firstSeenAt
+                // Messages kept in module storage survive a slot switch; keep
+                // the slot recorded when the message was first seen.
+                candidate.simSlot = previous.simSlot
                 candidate.replaceModemReferences(
                     with: previous.effectiveModemReferences + candidate.effectiveModemReferences
                 )

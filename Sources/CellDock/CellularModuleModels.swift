@@ -42,8 +42,14 @@ struct CellularModuleSummary: Identifiable, Equatable {
         isCommunicationEligible && modem.usbNetMode == 1
     }
 
+    /// "卡槽 n" for dual-slot modules; nil keeps single-slot modules unchanged.
+    var simSlotTitle: String? {
+        guard modem.simSlotSwitchingSupported, let slot = modem.simSlot else { return nil }
+        return L10n.tr("卡槽 %lld", Int64(slot))
+    }
+
     var selectorTitle: String {
-        [localizedDisplayName, modem.simReady ? carrierName : nil, technologyName]
+        [localizedDisplayName, simSlotTitle, modem.simReady ? carrierName : nil, technologyName]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
@@ -76,6 +82,12 @@ struct CellularModuleSummary: Identifiable, Equatable {
         case .queryFailed: return L10n.tr("SIM 状态异常")
         }
     }
+}
+
+struct SIMSlotSwitchProgress: Equatable {
+    let moduleID: CellularModuleID
+    let previousSlot: Int?
+    let targetSlot: Int
 }
 
 enum CellularModuleSelectionPolicy {
