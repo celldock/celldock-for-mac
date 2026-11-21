@@ -48,6 +48,7 @@ swiftc \
   "$ROOT/Sources/CellDock/QADBKeyDeriver.swift" \
   "$ROOT/Sources/CellDock/MessageConversation.swift" \
   "$ROOT/Sources/CellDock/CellularLinkRecovery.swift" \
+  "$ROOT/Sources/CellDock/NetworkHelperInstallPolicy.swift" \
   "$ROOT/Sources/CellDock/CellularModuleModels.swift" \
   "$ROOT/Sources/CellDock/NetworkThroughput.swift" \
   "$ROOT/Sources/CellDock/DeletedMessageRegistry.swift" \

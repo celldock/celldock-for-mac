@@ -1719,3 +1719,9 @@
 "正在修复蜂窝网络连接，请稍后再切换卡槽。" = "The cellular connection is being repaired. Try switching slots again later.";
 "正在切换 SIM 卡槽，请稍后再发送短信。" = "The SIM slot is being switched. Send the message again in a moment.";
 "正在切换 SIM 卡槽，请稍后再拨号。" = "The SIM slot is being switched. Try calling again in a moment.";
+
+/* Network helper install prompt (issue #15) */
+"网络 helper 尚未安装。重新开启蜂窝网络时会再次提供安装。" = "The network helper is not installed. Turning cellular networking on again will offer to install it.";
+"网络 helper 已安装，但拒绝或无法完成连接（例如 CellDock 的签名与 helper 不一致）：%@。CellDock 已停止请求管理员密码，请重新安装官方版本。" = "The network helper is installed, but it refuses or cannot complete the connection (for example because CellDock’s signature does not match the helper’s): %@. CellDock has stopped asking for the administrator password; please reinstall the official build.";
+"%@ 已停止自动重试安装网络 helper。" = "%@ Automatic retries of the network helper installation have stopped.";
+"网络 helper 当前不可用，本次运行中不会再自动请求管理员密码。重新开启蜂窝网络即可重试。" = "The network helper is currently unavailable. CellDock will not ask for the administrator password again automatically while it is running. Turn cellular networking on again to retry.";

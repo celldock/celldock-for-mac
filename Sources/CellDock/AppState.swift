@@ -783,7 +783,12 @@ final class AppState: ObservableObject {
            !isChangingNetwork {
             lastScheduledNetworkConfigurationSignature = signature
             DispatchQueue.main.async { [weak self] in
-                self?.applyCellularNetworkModes(modes, preparing: nil, force: true)
+                self?.applyCellularNetworkModes(
+                    modes,
+                    preparing: nil,
+                    force: true,
+                    installKind: .automatic
+                )
             }
         }
     }
@@ -1286,7 +1291,11 @@ final class AppState: ObservableObject {
                 isError: true
             )
         case let .apply(updatedModes):
-            applyCellularNetworkModes(updatedModes, preparing: mode.isEnabled ? moduleID : nil)
+            applyCellularNetworkModes(
+                updatedModes,
+                preparing: mode.isEnabled ? moduleID : nil,
+                installKind: .userInitiated
+            )
         }
     }
 
@@ -1296,7 +1305,8 @@ final class AppState: ObservableObject {
                 moduleIDs: cellularModules.map(\.id),
                 currentModes: cellularNetworkModesByModuleID
             ),
-            preparing: nil
+            preparing: nil,
+            installKind: .userInitiated
         )
     }
 
@@ -1304,13 +1314,21 @@ final class AppState: ObservableObject {
         let modes = Dictionary(uniqueKeysWithValues: cellularModules.map {
             ($0.id, networkMode(for: $0.id))
         })
-        applyCellularNetworkModes(modes, preparing: nil, force: true)
+        applyCellularNetworkModes(
+            modes,
+            preparing: nil,
+            force: true,
+            installKind: .userInitiated
+        )
     }
 
+    /// `installKind` decides whether a missing network helper may trigger the
+    /// administrator prompt: only user actions may ask again after a cancel.
     private func applyCellularNetworkModes(
         _ updatedModes: [CellularModuleID: CellularNetworkMode],
         preparing moduleIDToPrepare: CellularModuleID?,
-        force: Bool = false
+        force: Bool = false,
+        installKind: NetworkHelperInstallRequestKind
     ) {
         guard !isChangingNetwork else { return }
         let changedModes = updatedModes.filter { networkMode(for: $0.key) != $0.value }
@@ -1337,7 +1355,10 @@ final class AppState: ObservableObject {
 
         let apply = { [weak self] in
             guard let self else { return }
-            self.networkController.applyConfiguration(request) { [weak self] result in
+            self.networkController.applyConfiguration(
+                request,
+                installKind: installKind
+            ) { [weak self] result in
                 guard let self else { return }
                 self.isChangingNetwork = false
                 self.pendingCellularNetworkModesByModuleID.removeAll()
@@ -1490,7 +1511,13 @@ final class AppState: ObservableObject {
             completion(.failure(L10n.tr("无法建立多模组蜂窝网络配置。"), reason: .other))
             return
         }
-        networkController.applyConfiguration(request, completion: completion)
+        // Startup restore, automatic prioritisation and link-recovery
+        // re-apply all come here; none of them is a user action.
+        networkController.applyConfiguration(
+            request,
+            installKind: .automatic,
+            completion: completion
+        )
     }
 
     private func automaticallyRestoreCellularOnStartupIfNeeded() {

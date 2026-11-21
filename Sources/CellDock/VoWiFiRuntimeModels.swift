@@ -243,6 +243,15 @@ enum VoWiFiSessionState: Equatable, Sendable {
         self = status.isIMSReady ? .registered(status) : .registeringIMS(status)
     }
 
+    /// The state for a status query that found no usable network helper.
+    /// Without a helper nothing can be running, so a session nobody asked for
+    /// is stopped, not faulty. A session that should be running keeps the
+    /// failure: the helper may only be briefly unreachable, and reporting it
+    /// as stopped would tear the session down.
+    static func whenHelperNotReady(runningRequested: Bool, message: String) -> Self {
+        runningRequested ? .failed(message) : .stopped
+    }
+
     var status: VoWiFiRuntimeStatus? {
         switch self {
         case let .starting(status), let .authenticatingSIM(status),

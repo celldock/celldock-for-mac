@@ -92,7 +92,7 @@ final class VoWiFiController: ObservableObject {
     func setRunning(_ running: Bool, for moduleID: CellularModuleID) {
         guard availableModules.contains(where: { $0.id == moduleID }) else { return }
         if running {
-            startSession(moduleID)
+            startSession(moduleID, installKind: .userInitiated)
         } else {
             stopSession(moduleID)
         }
@@ -103,7 +103,7 @@ final class VoWiFiController: ObservableObject {
     /// the whole IKE SA and cannot be re-pointed in place.
     func reapplyUpstreamRoute(for moduleID: CellularModuleID) {
         guard desiredRunning.contains(moduleID) else { return }
-        restartSession(moduleID)
+        restartSession(moduleID, installKind: .userInitiated)
     }
 
     func refreshAll() {
@@ -119,7 +119,10 @@ final class VoWiFiController: ObservableObject {
 
     // MARK: - Session lifecycle
 
-    private func startSession(_ moduleID: CellularModuleID) {
+    private func startSession(
+        _ moduleID: CellularModuleID,
+        installKind: NetworkHelperInstallRequestKind
+    ) {
         guard let module = availableModules.first(where: { $0.id == moduleID }),
               claim(moduleID) else { return }
         desiredRunning.insert(moduleID)
@@ -165,7 +168,8 @@ final class VoWiFiController: ObservableObject {
                     bridgeHost: host,
                     egress: egress,
                     upstream: upstream,
-                    moduleID: moduleID
+                    moduleID: moduleID,
+                    installKind: installKind
                 )
             case let .failure(error):
                 self.release(moduleID)
@@ -182,7 +186,8 @@ final class VoWiFiController: ObservableObject {
         bridgeHost: String,
         egress: VoWiFiEgress,
         upstream: VoWiFiUpstreamProxySnapshot?,
-        moduleID: CellularModuleID
+        moduleID: CellularModuleID,
+        installKind: NetworkHelperInstallRequestKind
     ) {
         guard desiredRunning.contains(moduleID) else {
             release(moduleID)
@@ -208,7 +213,7 @@ final class VoWiFiController: ObservableObject {
             proxyURL: upstream.map(proxyURL),
             tunMTU: 1_280
         )
-        hostClient.startVoWiFiHost(request) { [weak self] result in
+        hostClient.startVoWiFiHost(request, installKind: installKind) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.release(moduleID)
@@ -250,7 +255,10 @@ final class VoWiFiController: ObservableObject {
         }
     }
 
-    private func restartSession(_ moduleID: CellularModuleID) {
+    private func restartSession(
+        _ moduleID: CellularModuleID,
+        installKind: NetworkHelperInstallRequestKind
+    ) {
         guard claim(moduleID) else { return }
         apply(.checking, to: moduleID)
         hostClient.stopVoWiFiHost(runtimeKey: runtimeKey(for: moduleID)) { [weak self] result in
@@ -259,7 +267,7 @@ final class VoWiFiController: ObservableObject {
                 self.release(moduleID)
                 self.teardownHost(moduleID)
                 switch result {
-                case .success: self.startSession(moduleID)
+                case .success: self.startSession(moduleID, installKind: installKind)
                 case let .failure(error):
                     self.desiredRunning.remove(moduleID)
                     self.finish(.failed(error.localizedDescription), for: moduleID)
@@ -283,6 +291,14 @@ final class VoWiFiController: ObservableObject {
                 switch result {
                 case let .success(data):
                     self.evaluate(VoWiFiRuntimeStatus.parse(jsonData: data), for: moduleID)
+                case let .failure(error as NetworkHelperNotReadyError):
+                    self.finish(
+                        .whenHelperNotReady(
+                            runningRequested: self.desiredRunning.contains(moduleID),
+                            message: error.message
+                        ),
+                        for: moduleID
+                    )
                 case let .failure(error):
                     self.finish(.failed(error.localizedDescription), for: moduleID)
                 }
@@ -303,7 +319,7 @@ final class VoWiFiController: ObservableObject {
             }
             switch state {
             case .desynchronized:
-                restartSession(moduleID)
+                restartSession(moduleID, installKind: .automatic)
                 return
             case .stopped, .failed:
                 teardownHost(moduleID)
@@ -314,7 +330,7 @@ final class VoWiFiController: ObservableObject {
                     voWiFiLogger.notice(
                         "Rebuilding VoWiFi session after network change module=\(moduleID.rawValue, privacy: .public)"
                     )
-                    restartSession(moduleID)
+                    restartSession(moduleID, installKind: .automatic)
                     return
                 }
             }
@@ -398,7 +414,8 @@ final class VoWiFiController: ObservableObject {
                   session.identity != current else {
                 continue
             }
-            restartSession(moduleID)
+            // Wi-Fi changes restart a running session in the background.
+            restartSession(moduleID, installKind: .automatic)
         }
     }
 
