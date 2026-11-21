@@ -121,12 +121,36 @@ cleanup() {
 trap cleanup EXIT
 
 cd "$ROOT"
+# macOS decides from the SDK version recorded in LC_BUILD_VERSION whether an
+# app gets the current system appearance (window controls, materials). The
+# SwiftPM link step records the deployment target as the SDK version, which
+# puts the app in compatibility mode, so pass both values to the linker
+# explicitly. The minimum comes from Info.plist (the single source of truth,
+# matching Package.swift's macOS 14 platform); the SDK is the one installed.
+DEPLOYMENT_TARGET="$(plutil -extract LSMinimumSystemVersion raw "$ROOT/Resources/Info.plist")"
+[[ "$DEPLOYMENT_TARGET" == "14.0" ]] || {
+  print -u2 "Resources/Info.plist LSMinimumSystemVersion ($DEPLOYMENT_TARGET) does not match the macOS 14 package platform."
+  exit 1
+}
+MACOS_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+[[ "$MACOS_SDK_VERSION" == <->.<->(|.<->) ]] || {
+  print -u2 "Could not determine the installed macOS SDK version: $MACOS_SDK_VERSION"
+  exit 1
+}
+LINKER_PLATFORM_OPTIONS=(
+  -Xlinker -platform_version
+  -Xlinker macos
+  -Xlinker "$DEPLOYMENT_TARGET"
+  -Xlinker "$MACOS_SDK_VERSION"
+)
 swift build --disable-sandbox -Xswiftc -disable-sandbox \
   -c release \
-  "${BUILD_ARCH_OPTIONS[@]}"
+  "${BUILD_ARCH_OPTIONS[@]}" \
+  "${LINKER_PLATFORM_OPTIONS[@]}"
 BIN_DIR="$(swift build --disable-sandbox -Xswiftc -disable-sandbox \
   -c release \
   "${BUILD_ARCH_OPTIONS[@]}" \
+  "${LINKER_PLATFORM_OPTIONS[@]}" \
   --show-bin-path)"
 
 mkdir -p "$OUTPUT_DIR"
@@ -411,6 +435,31 @@ VERIFY_VOWIFI_ARCHS=" $(lipo -archs "$VERIFY_VOWIFI_RUNTIME") "
   print -u2 "Archive helper minOS is not 14.0."
   exit 1
 }
+# Every architecture of the Swift-linked executables must record the
+# deployment target and the installed SDK; otherwise macOS runs the app in
+# compatibility mode with the old window appearance.
+for linked_binary in "$VERIFY_BINARY" "$VERIFY_HELPER"; do
+  for architecture in arm64 x86_64; do
+    BUILD_INFO="$(vtool -arch "$architecture" -show-build "$linked_binary")"
+    RECORDED_MINOS="$(print -r -- "$BUILD_INFO" | awk '$1 == "minos" { print $2; exit }')"
+    RECORDED_SDK="$(print -r -- "$BUILD_INFO" | awk '$1 == "sdk" { print $2; exit }')"
+    [[ "$RECORDED_MINOS" == "$DEPLOYMENT_TARGET" && "$RECORDED_SDK" == "$MACOS_SDK_VERSION" ]] || {
+      print -u2 "${linked_binary:t} ($architecture) records minos $RECORDED_MINOS / sdk $RECORDED_SDK; expected $DEPLOYMENT_TARGET / $MACOS_SDK_VERSION."
+      exit 1
+    }
+  done
+done
+# The VoWiFi runtime is linked by Go's internal linker (CGO disabled), which
+# writes its own fixed minimum and SDK versions. It is a helper process with
+# no UI, so only require that it runs on the app's minimum macOS.
+autoload -Uz is-at-least
+for architecture in arm64 x86_64; do
+  VOWIFI_MINOS="$(vtool -arch "$architecture" -show-build "$VERIFY_VOWIFI_RUNTIME" | awk '$1 == "minos" { print $2; exit }')"
+  [[ -n "$VOWIFI_MINOS" ]] && is-at-least "$VOWIFI_MINOS" "$DEPLOYMENT_TARGET" || {
+    print -u2 "VoWiFi runtime ($architecture) requires macOS ${VOWIFI_MINOS:-unknown}, above $DEPLOYMENT_TARGET."
+    exit 1
+  }
+done
 [[ "$(codesign -dvv "$VERIFY_BINARY" 2>&1 | awk -F= '$1 == "Identifier" { print $2; exit }')" == "app.celldock.mac" ]] || {
   print -u2 "Archive executable signing identifier is incorrect."
   exit 1
