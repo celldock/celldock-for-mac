@@ -817,7 +817,11 @@ struct CellDockSettingsView: View {
 
     private var cellularSummary: String {
         guard appState.modem.isConnected else { return L10n.tr("SIM 1 · 模块未连接") }
-        return (["SIM 1", appState.modem.operatorName, appState.modem.accessTechnology]
+        // Dual-slot modules show the active slot; others keep "SIM 1".
+        let slotTitle = appState.modem.simSlotSwitchingSupported
+            ? appState.modem.simSlot.map { "SIM \($0)" } ?? "SIM 1"
+            : "SIM 1"
+        return ([slotTitle, appState.modem.operatorName, appState.modem.accessTechnology]
             .compactMap { $0 })
             .joined(separator: " · ")
     }

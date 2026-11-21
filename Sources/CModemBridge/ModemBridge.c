@@ -202,7 +202,12 @@ static int string_property(
 
 static int is_known_modem_identity(int vendor, int product) {
     return (vendor == 0x2C7C && product == 0x0125) ||
+        (vendor == 0x2C7C && product == 0x0801) ||
         (vendor == 0x2CA3 && product == 0x4006);
+}
+
+int celldock_modem_is_supported_identity(uint16_t vendor_id, uint16_t product_id) {
+    return is_known_modem_identity(vendor_id, product_id);
 }
 
 static int compare_modem_devices(const void *left, const void *right) {

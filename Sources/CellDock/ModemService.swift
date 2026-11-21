@@ -114,6 +114,14 @@ final class ModemService {
     private var didQuerySIMIdentity = false
     private var nextSIMRefreshAt = Date.distantPast
     private var simFastPollingDeadline: Date?
+    /// After a SIM slot change the first reads can be stale, so the regular
+    /// SIM refresh runs every few seconds until this deadline.
+    private var simSlotSettleRefreshDeadline: Date?
+    private static let simSlotSettleRefreshWindow: TimeInterval = 20
+    private static let simSlotSettleRefreshInterval: TimeInterval = 5
+    /// Right after AT+QUIMSLOT a module can briefly report "SIM not inserted"
+    /// while it is still detecting the card.
+    private static let simSlotAbsentSettleInterval: TimeInterval = 8
     private var consecutiveSIMQueryFailures = 0
     private var expectedRestartStartedAt: Date?
     private var expectedRestartObservedDisconnect = false
@@ -1474,6 +1482,174 @@ final class ModemService {
         }
     }
 
+    /// Selects the active SIM slot on dual-slot modules (dual SIM single
+    /// standby). Only modules whose firmware matches `SIMSlotSwitchingPolicy`
+    /// and that answered AT+QUIMSLOT? during initialization reach the write.
+    func switchSIMSlot(
+        _ slot: Int,
+        completion: @escaping (ModemActionResult) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, self.isOpen else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块尚未连接。"))) }
+                return
+            }
+            guard !self.callSnapshot.hasCall,
+                  !self.hasPendingMediaCleanup,
+                  !self.callActionInFlight else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("通话或语音清理期间不能切换 SIM 卡槽。")))
+                }
+                return
+            }
+            guard !self.euiccOperationInFlight else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("eSIM 操作期间不能切换 SIM 卡槽。")))
+                }
+                return
+            }
+            guard self.snapshot.simSlotSwitchingSupported else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("这个模组不支持切换 SIM 卡槽。")))
+                }
+                return
+            }
+            guard (1 ... SIMSlotSwitchingPolicy.slotCount).contains(slot) else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("卡槽编号无效。"))) }
+                return
+            }
+
+            let query = self.command("AT+QUIMSLOT?", timeout: 3_000)
+            guard query.isSuccess,
+                  let currentSlot = ATResponseParser.parseSIMSlot(query.output) else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("无法读取当前 SIM 卡槽，未执行切换。")))
+                }
+                return
+            }
+            if currentSlot == slot {
+                if self.snapshot.simSlot != slot {
+                    self.snapshot.simSlot = slot
+                    self.publishSnapshot(self.snapshot)
+                }
+                DispatchQueue.main.async {
+                    completion(.success(L10n.tr("已在使用卡槽 %lld。", Int64(slot))))
+                }
+                return
+            }
+
+            let write = self.command("AT+QUIMSLOT=\(slot)", timeout: 5_000)
+            guard write.isSuccess else {
+                DispatchQueue.main.async {
+                    completion(.failure(write.error ?? L10n.tr("模块拒绝切换 SIM 卡槽。")))
+                }
+                return
+            }
+            let writeAcceptedAt = Date()
+            let verify = self.command("AT+QUIMSLOT?", timeout: 3_000)
+            guard verify.isSuccess,
+                  let verifiedSlot = ATResponseParser.parseSIMSlot(verify.output) else {
+                // The write was accepted, so the card may already be offline.
+                self.needsSIMRefresh = true
+                self.tickNumber = 9
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("切换卡槽后的回读校验失败。")))
+                }
+                return
+            }
+            guard verifiedSlot == slot else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("切换卡槽后的回读校验失败。")))
+                }
+                return
+            }
+
+            self.snapshot.simSlot = verifiedSlot
+            self.clearPerCardSnapshotFields()
+            self.beginSIMInitialization()
+            self.publishSnapshot(self.snapshot)
+
+            // The module needs a few seconds to re-read the card after the
+            // switch; wait for a definitive SIM state before resuming polling.
+            Thread.sleep(forTimeInterval: 2)
+            var finalState: SIMState?
+            for _ in 0 ..< 30 {
+                guard self.isOpen else { break }
+                let pin = self.command("AT+CPIN?", timeout: 3_000)
+                if let state = ATResponseParser.parseSIMState(pin.output) {
+                    finalState = state
+                    // "SIM not inserted" is provisional while the card may
+                    // still be detected; ready, PIN and PUK are definitive.
+                    if state != .absent ||
+                        Date().timeIntervalSince(writeAcceptedAt) >= Self.simSlotAbsentSettleInterval {
+                        break
+                    }
+                }
+                Thread.sleep(forTimeInterval: 1)
+            }
+
+            guard self.isOpen else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块已断开"))) }
+                return
+            }
+
+            // Messages stored on the previous card's SIM storage are gone and
+            // the new card's stored messages are not new arrivals, so rerun the
+            // SMS setup from initialization and treat the next poll as initial.
+            self.resetSMSConnectionState()
+            _ = self.configureMessageService()
+
+            self.beginSIMSlotSettleRefresh()
+            self.needsSIMRefresh = true
+            self.needsImmediateMessagePoll = true
+            self.tickNumber = 9
+            self.tick()
+
+            let message: String
+            switch finalState {
+            case .ready:
+                message = L10n.tr("已切换到卡槽 %lld。", Int64(verifiedSlot))
+            case .absent:
+                message = L10n.tr("已切换到卡槽 %lld，但没有检测到 SIM 卡。可以切换回原来的卡槽。", Int64(verifiedSlot))
+            case .pinRequired, .pukRequired:
+                message = L10n.tr("已切换到卡槽 %lld，这张 SIM 卡已锁定。", Int64(verifiedSlot))
+            default:
+                message = L10n.tr("已切换到卡槽 %lld，SIM 卡仍在读取。", Int64(verifiedSlot))
+            }
+            DispatchQueue.main.async { completion(.success(message)) }
+        }
+    }
+
+    private func beginSIMSlotSettleRefresh() {
+        simSlotSettleRefreshDeadline = Date().addingTimeInterval(Self.simSlotSettleRefreshWindow)
+    }
+
+    /// Schedules the next regular SIM refresh, shortened while a slot change
+    /// is settling.
+    private func scheduleNextSIMRefresh(after interval: TimeInterval, from now: Date) {
+        if let deadline = simSlotSettleRefreshDeadline {
+            if now < deadline {
+                nextSIMRefreshAt = now.addingTimeInterval(
+                    min(interval, Self.simSlotSettleRefreshInterval)
+                )
+                return
+            }
+            simSlotSettleRefreshDeadline = nil
+        }
+        nextSIMRefreshAt = now.addingTimeInterval(interval)
+    }
+
+    private func clearPerCardSnapshotFields() {
+        snapshot.simPhoneNumber = nil
+        snapshot.simICCID = nil
+        snapshot.simIMSI = nil
+        snapshot.operatorName = nil
+        snapshot.registrationState = .unavailable
+        snapshot.voiceRegistrationState = .unavailable
+        snapshot.volteSessionAvailable = nil
+        didQuerySIMIdentity = false
+    }
+
     private func beginOutgoingCall(
         _ number: String,
         token: CallActionToken,
@@ -2742,6 +2918,7 @@ final class ModemService {
         let isRestartReconnect = expectedRestartStartedAt != nil
         cancelQDCInitializationRetry()
         didQuerySIMIdentity = false
+        simSlotSettleRefreshDeadline = nil
         let usbLocationID = celldock_modem_location_id(modem)
         let usbNames = ModemUSBIdentityResolver.names(for: usbLocationID)
         let hardwareFamily = ModemHardwareFamily.classify(
@@ -2799,6 +2976,18 @@ final class ModemService {
             }
             .joined(separator: " ")
         snapshot.firmwareVersion = firmwareIdentity.isEmpty ? nil : firmwareIdentity
+        // Single-slot firmware (QDC507/EG25) never receives AT+QUIMSLOT.
+        if SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots(snapshot.firmwareVersion) {
+            let slotResponse = command("AT+QUIMSLOT?", timeout: 3_000)
+            let reportedSlot = slotResponse.isSuccess
+                ? ATResponseParser.parseSIMSlot(slotResponse.output)
+                : nil
+            snapshot.simSlotSwitchingSupported = SIMSlotSwitchingPolicy.isSupported(
+                firmwareVersion: snapshot.firmwareVersion,
+                reportedSlot: reportedSlot
+            )
+            snapshot.simSlot = snapshot.simSlotSwitchingSupported ? reportedSlot : nil
+        }
         let pcmCapability: CommandResult? = hardwareFamily == .quectelNativeVoice
             ? command("AT+QPCMV=?", timeout: 3_000)
             : nil
@@ -2894,6 +3083,28 @@ final class ModemService {
         if shouldRetryQDCInitialization {
             scheduleQDCInitializationRetry()
         }
+        let messageServiceConfigured = configureMessageService()
+
+        refreshSIMSnapshot()
+        let usbNet = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
+        snapshot.usbNetMode = ATResponseParser.parseUSBNetMode(usbNet.output)
+        let usbConfiguration = command("AT+QCFG=\"USBCFG\"", timeout: 3_000)
+        snapshot.usbConfiguration = ATResponseParser.parseUSBConfiguration(usbConfiguration.output)
+        let ims = command("AT+QCFG=\"ims\"", timeout: 3_000)
+        snapshot.imsMode = ATResponseParser.parseIMSMode(ims.output)
+        snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(ims.output)
+        snapshot.state = .connected
+        clearExpectedModuleRestart()
+        snapshot.lastError = messageServiceConfigured
+            ? nil
+            : L10n.tr("模块已连接，但短信 PDU/CNMI 初始化失败。")
+        refreshRadioSnapshot()
+        needsImmediateMessagePoll = true
+    }
+
+    /// SMS mode, indications and storage discovery. Returns whether PDU mode
+    /// and CNMI were accepted.
+    private func configureMessageService() -> Bool {
         let pduMode = command("AT+CMGF=0", timeout: 2_000)
         let indications = command("AT+CNMI=2,1,0,0,0", timeout: 2_000)
         let storage = command("AT+CPMS?", timeout: 3_000)
@@ -2907,22 +3118,7 @@ final class ModemService {
                 from: storageCapabilities.output
             )
         }
-
-        refreshSIMSnapshot()
-        let usbNet = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
-        snapshot.usbNetMode = ATResponseParser.parseUSBNetMode(usbNet.output)
-        let usbConfiguration = command("AT+QCFG=\"USBCFG\"", timeout: 3_000)
-        snapshot.usbConfiguration = ATResponseParser.parseUSBConfiguration(usbConfiguration.output)
-        let ims = command("AT+QCFG=\"ims\"", timeout: 3_000)
-        snapshot.imsMode = ATResponseParser.parseIMSMode(ims.output)
-        snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(ims.output)
-        snapshot.state = .connected
-        clearExpectedModuleRestart()
-        snapshot.lastError = pduMode.isSuccess && indications.isSuccess
-            ? nil
-            : L10n.tr("模块已连接，但短信 PDU/CNMI 初始化失败。")
-        refreshRadioSnapshot()
-        needsImmediateMessagePoll = true
+        return pduMode.isSuccess && indications.isSuccess
     }
 
     private func scheduleQDCInitializationRetry() {
@@ -3002,6 +3198,9 @@ final class ModemService {
 
     private func refreshSIMSnapshot() {
         guard isOpen else { return }
+        if snapshot.simSlotSwitchingSupported {
+            refreshSIMSlot()
+        }
         let sim = command("AT+CPIN?", timeout: 3_000)
         let now = Date()
         guard let state = ATResponseParser.parseSIMState(sim.output) else {
@@ -3017,12 +3216,12 @@ final class ModemService {
             if isWithinFastPollingWindow, consecutiveSIMQueryFailures < 3 {
                 snapshot.simState = .initializing
                 snapshot.simLastError = nil
-                nextSIMRefreshAt = now.addingTimeInterval(2)
+                scheduleNextSIMRefresh(after: 2, from: now)
             } else {
                 snapshot.simState = .queryFailed
                 snapshot.simLastError = sim.error ?? L10n.tr("AT+CPIN? 未返回可识别的 SIM 状态。")
                 simFastPollingDeadline = nil
-                nextSIMRefreshAt = now.addingTimeInterval(15)
+                scheduleNextSIMRefresh(after: 15, from: now)
             }
             return
         }
@@ -3031,7 +3230,7 @@ final class ModemService {
         simFastPollingDeadline = nil
         snapshot.simState = state
         snapshot.simLastError = nil
-        nextSIMRefreshAt = now.addingTimeInterval(state == .ready ? 60 : 10)
+        scheduleNextSIMRefresh(after: state == .ready ? 60 : 10, from: now)
         guard state == .ready else {
             snapshot.simPhoneNumber = nil
             snapshot.simICCID = nil
@@ -3078,6 +3277,25 @@ final class ModemService {
         }
     }
 
+    /// Picks up a slot change made outside CellDock, such as in the AT console.
+    private func refreshSIMSlot() {
+        let response = command("AT+QUIMSLOT?", timeout: 3_000)
+        guard response.isSuccess,
+              let slot = ATResponseParser.parseSIMSlot(response.output),
+              slot != snapshot.simSlot else {
+            return
+        }
+        let hadPreviousSlot = snapshot.simSlot != nil
+        snapshot.simSlot = slot
+        guard hadPreviousSlot else { return }
+        clearPerCardSnapshotFields()
+        beginSIMSlotSettleRefresh()
+        // The new card's stored messages are not new arrivals.
+        resetSMSConnectionState()
+        _ = configureMessageService()
+        needsImmediateMessagePoll = true
+    }
+
     private func refreshRadioSnapshot() {
         guard isOpen else { return }
         if snapshot.simState == .ready {
@@ -3085,6 +3303,21 @@ final class ModemService {
             snapshot.registrationState = dataRegistration.isSuccess
                 ? (ATResponseParser.parseRegistrationState(dataRegistration.output) ?? .queryFailed)
                 : .queryFailed
+            if NR5GRegistrationPolicy.shouldQueryC5GREG(
+                firmwareVersion: snapshot.firmwareVersion,
+                epsRegistration: snapshot.registrationState
+            ) {
+                let nrRegistration = command("AT+C5GREG?", timeout: 3_000)
+                snapshot.registrationState = NR5GRegistrationPolicy.effectiveRegistration(
+                    eps: snapshot.registrationState,
+                    nr: nrRegistration.isSuccess
+                        ? ATResponseParser.parseRegistrationState(
+                            nrRegistration.output,
+                            prefix: "+C5GREG"
+                        )
+                        : nil
+                )
+            }
 
             let voiceRegistration = command("AT+CREG?", timeout: 3_000)
             snapshot.voiceRegistrationState = voiceRegistration.isSuccess

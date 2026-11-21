@@ -48,6 +48,8 @@ final class AppState: ObservableObject {
     @Published var isConvertingModuleIdentity = false
     @Published var isChangingCall = false
     @Published var isChangingIncomingCallSetting = false
+    /// The module that is switching SIM slots and the slot it is moving to.
+    @Published private(set) var simSlotSwitch: SIMSlotSwitchProgress?
     @Published var isSendingMessage = false
     @Published var isExecutingAT = false
     @Published private(set) var transientMessage: String?
@@ -936,9 +938,12 @@ final class AppState: ObservableObject {
         moduleID: CellularModuleID,
         isInitialSync: Bool
     ) {
+        let simSlot = simSlotForNewRecord(on: moduleID)
         let taggedMessages = incoming.map { message in
             var tagged = message
             tagged.assignModule(moduleID)
+            // The merger keeps the slot of messages that were already known.
+            tagged.simSlot = simSlot
             return tagged
         }
         let newMessages = messageStore.merge(taggedMessages)
@@ -974,7 +979,8 @@ final class AppState: ObservableObject {
         moduleCallSnapshots[moduleID] = taggedSnapshot
         let completedCall = callHistory.consume(
             previous: previousModuleCall,
-            current: taggedSnapshot
+            current: taggedSnapshot,
+            simSlot: simSlotForNewRecord(on: moduleID)
         )
 
         if taggedSnapshot.hasCall {
@@ -1385,6 +1391,9 @@ final class AppState: ObservableObject {
         }
 
         if let moduleIDToPrepare,
+           CellularLinkRecoveryPolicy.supportsModuleRepair(
+               moduleSnapshot(for: moduleIDToPrepare)
+           ),
            CellularLinkRecoveryPolicy.needsLinkPreparation(
                networkStatus(for: moduleIDToPrepare)
            ),
@@ -1594,7 +1603,7 @@ final class AppState: ObservableObject {
                 modem: moduleSnapshot(for: moduleID),
                 desiredMode: networkMode(for: moduleID),
                 hasCall: call.hasCall,
-                isChangingNetwork: isChangingNetwork,
+                isChangingNetwork: isChangingNetwork || isSwitchingSIMSlot(on: moduleID),
                 isInFlight: cellularLinkRecoveryInFlight,
                 completedAttempts: completedCellularLinkRecoveryAttempts[moduleID] ?? 0
             )
@@ -1745,7 +1754,10 @@ final class AppState: ObservableObject {
             ?? activeCommunicationModuleID
         // Returning false hands the failure back to the soft-recovery ladder,
         // which retries with backoff and only then considers a restart.
-        guard CellularLinkRecoveryPolicy.shouldEscalateToRestart(
+        guard CellularLinkRecoveryPolicy.supportsModuleRepair(
+            moduleSnapshot(for: targetModuleID)
+        ),
+              CellularLinkRecoveryPolicy.shouldEscalateToRestart(
             reason: reason,
             completedAttempts: completedCellularLinkRecoveryAttempts[targetModuleID] ?? 0
         ) else {
@@ -2182,6 +2194,64 @@ final class AppState: ObservableObject {
         }
     }
 
+    func isSwitchingSIMSlot(on moduleID: CellularModuleID?) -> Bool {
+        guard let simSlotSwitch else { return false }
+        return simSlotSwitch.moduleID == communicationModuleID(requested: moduleID)
+    }
+
+    /// Slot recorded on new messages and calls. Only dual-slot modules tag
+    /// records, so single-slot modules keep storing nil.
+    private func simSlotForNewRecord(on moduleID: CellularModuleID) -> Int? {
+        let snapshot = moduleSnapshot(for: moduleID)
+        guard snapshot.simSlotSwitchingSupported else { return nil }
+        return snapshot.simSlot
+    }
+
+    func switchSIMSlot(
+        _ slot: Int,
+        moduleID requestedModuleID: CellularModuleID? = nil
+    ) {
+        guard simSlotSwitch == nil else { return }
+        let moduleID = communicationModuleID(requested: requestedModuleID)
+        guard !euiccSnapshot(for: moduleID).isBusy else {
+            presentTransientMessage(L10n.tr("eSIM 操作期间不能切换 SIM 卡槽。"), isError: true)
+            return
+        }
+        guard !moduleHasCall(moduleID) else {
+            presentTransientMessage(L10n.tr("通话期间不能切换 SIM 卡槽。"), isError: true)
+            return
+        }
+        guard !isRecoveringNetworkLink(for: moduleID) else {
+            presentTransientMessage(L10n.tr("正在修复蜂窝网络连接，请稍后再切换卡槽。"), isError: true)
+            return
+        }
+        guard let service = modemService(for: moduleID) else {
+            presentTransientMessage(L10n.tr("所选模组尚未就绪。"), isError: true)
+            return
+        }
+        let snapshot = moduleSnapshot(for: moduleID)
+        guard snapshot.simSlotSwitchingSupported else {
+            presentTransientMessage(L10n.tr("这个模组不支持切换 SIM 卡槽。"), isError: true)
+            return
+        }
+        simSlotSwitch = SIMSlotSwitchProgress(
+            moduleID: moduleID,
+            previousSlot: snapshot.simSlot,
+            targetSlot: slot
+        )
+        dismissTransientMessage()
+        // Indices in SIM storage will belong to the other card. The poll that
+        // follows the switch re-adds references for messages still stored.
+        messageStore.invalidateModemReferences(for: moduleID)
+        messages = messageStore.messages
+        service.switchSIMSlot(slot) { [weak self] result in
+            guard let self else { return }
+            self.simSlotSwitch = nil
+            self.show(result)
+            self.scheduleCellularLinkRecoveryIfNeeded()
+        }
+    }
+
     func dial(_ number: String) {
         let moduleID = communicationModuleID()
         guard let service = modemService(for: moduleID) else {
@@ -2194,6 +2264,10 @@ final class AppState: ObservableObject {
         }
         guard !call.hasCall else {
             presentTransientMessage(L10n.tr("已有一路通话，结束后才能使用另一张卡拨号。"), isError: true)
+            return
+        }
+        guard !isSwitchingSIMSlot(on: moduleID) else {
+            presentTransientMessage(L10n.tr("正在切换 SIM 卡槽，请稍后再拨号。"), isError: true)
             return
         }
         guard !isChangingCall else { return }
@@ -2350,6 +2424,13 @@ final class AppState: ObservableObject {
             ))
             return
         }
+        guard !isSwitchingSIMSlot(on: moduleID) else {
+            completion(.failure(
+                L10n.tr("正在切换 SIM 卡槽，请稍后再发送短信。"),
+                isDeliveryUncertain: false
+            ))
+            return
+        }
         guard sendingMessageModuleIDs.insert(moduleID).inserted else {
             completion(.failure(
                 L10n.tr("该模组已有短信正在发送。"),
@@ -2360,7 +2441,8 @@ final class AppState: ObservableObject {
         let outgoingMessageID = messageStore.appendOutgoing(
             to: destination,
             body: body,
-            moduleID: moduleID
+            moduleID: moduleID,
+            simSlot: simSlotForNewRecord(on: moduleID)
         )
         messages = messageStore.messages
         isSendingMessage = true

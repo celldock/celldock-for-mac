@@ -203,8 +203,12 @@ struct PhoneSidebarView: View {
     }
 
     private func moduleName(_ record: CallHistoryRecord) -> String? {
-        guard let moduleID = record.moduleID else { return nil }
-        return appState.cellularModules.first(where: { $0.id == moduleID })?.displayName
+        guard let moduleID = record.moduleID,
+              let name = appState.cellularModules.first(where: { $0.id == moduleID })?.displayName else {
+            return nil
+        }
+        guard let simSlot = record.simSlot else { return name }
+        return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
     }
 
     private func callAccessibilityLabel(_ number: String) -> String {

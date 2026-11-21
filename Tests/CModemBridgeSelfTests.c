@@ -16,6 +16,14 @@ int main(void) {
     assert(vendor_name[0] == '\0');
     assert(product_name[0] == '\0');
 
+    assert(celldock_modem_is_supported_identity(0x2C7C, 0x0125) == 1);
+    assert(celldock_modem_is_supported_identity(0x2C7C, 0x0801) == 1);
+    assert(celldock_modem_is_supported_identity(0x2CA3, 0x4006) == 1);
+    assert(celldock_modem_is_supported_identity(0x2C7C, 0x0800) == 0);
+    assert(celldock_modem_is_supported_identity(0x2C7C, 0x0802) == 0);
+    assert(celldock_modem_is_supported_identity(0x2CA3, 0x0801) == 0);
+    assert(celldock_modem_is_supported_identity(0x0000, 0x0000) == 0);
+
     size_t discovered_count = celldock_modem_copy_devices(NULL, 0);
     CellDockModemDevice discovered[8] = {0};
     size_t copied_count = celldock_modem_copy_devices(discovered, 8);
@@ -23,7 +31,10 @@ int main(void) {
     size_t inspected_count = copied_count < 8 ? copied_count : 8;
     for (size_t index = 0; index < inspected_count; index++) {
         assert(discovered[index].location_id != 0);
-        assert(discovered[index].vendor_id == 0x2C7C || discovered[index].vendor_id == 0x2CA3);
+        assert(celldock_modem_is_supported_identity(
+            discovered[index].vendor_id,
+            discovered[index].product_id
+        ) == 1);
         assert(celldock_modem_copy_usb_names(
             discovered[index].location_id,
             vendor_name,

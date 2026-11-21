@@ -116,6 +116,19 @@ enum ATResponseParser {
         return value == 1
     }
 
+    /// Parses `+QUIMSLOT: <n>` and accepts only the two physical slots.
+    static func parseSIMSlot(_ response: String) -> Int? {
+        guard let line = normalizedLines(response).first(where: {
+            $0.uppercased().hasPrefix("+QUIMSLOT:")
+        }) else {
+            return nil
+        }
+        let payload = line.dropFirst("+QUIMSLOT:".count)
+            .trimmingCharacters(in: .whitespaces)
+        guard let slot = Int(payload), slot == 1 || slot == 2 else { return nil }
+        return slot
+    }
+
     static func parseSIMReady(_ response: String) -> Bool {
         parseSIMState(response) == .ready
     }
@@ -283,6 +296,21 @@ enum ATResponseParser {
 
         let technology = unquote(fields[0]).uppercased()
         let numbers = fields.dropFirst().compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+
+        // 5G (RM520N): +QCSQ: "NR5G",<rsrp>,<sinr>,<rsrq>. There is no RSSI
+        // field, so the first value must not be labelled as one. Invalid
+        // measurements are reported as -32768 or out-of-range values.
+        if technology.hasPrefix("NR5G") {
+            guard numbers.count >= 3,
+                  (-156 ... -31).contains(numbers[0]) else {
+                return nil
+            }
+            let rsrp = numbers[0]
+            let sinr = numbers[1]
+            let rsrq = numbers[2]
+            return (rsrp, technology, "RSRP \(rsrp) · SINR \(sinr) · RSRQ \(rsrq)")
+        }
+
         guard let rssi = numbers.first, rssi != -125 else { return nil }
 
         if technology.contains("LTE"), numbers.count >= 4 {

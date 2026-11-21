@@ -1683,3 +1683,36 @@
 "飞书" = "Feishu";
 "正在启用…" = "Activation…";
 "正在停用…" = "Désactivation…";
+
+/* SIM slot switching */
+"卡槽" = "Emplacement SIM";
+"卡槽 %lld" = "Emplacement %lld";
+" · 卡 %lld" = " · SIM %lld";
+"卡槽 %lld（共 %lld 个）" = "Emplacement %lld (sur %lld)";
+"同一时间只有一张卡在线" = "Une seule carte SIM est en ligne à la fois";
+"切换中" = "Changement…";
+"已离线" = "Hors ligne";
+"正在重新读取 SIM 卡" = "Relecture de la carte SIM";
+"大约需要 3 到 5 秒" = "Environ 3 à 5 secondes";
+"切换后读取这张卡的运营商和号码" = "L’opérateur et le numéro de cette carte sont lus après le changement";
+"切换到卡槽 %lld" = "Passer à l’emplacement %lld";
+"切换到卡槽 %lld？" = "Passer à l’emplacement %lld ?";
+"切换" = "Changer";
+"卡槽 %lld 会离线，切回之前它收不到来电和短信。蜂窝网络会中断几秒，然后用卡槽 %lld 重新连接。" = "L’emplacement %lld passe hors ligne et ne reçoit ni appels ni SMS tant que vous n’y revenez pas. Le réseau cellulaire est coupé quelques secondes, puis se reconnecte avec l’emplacement %lld.";
+"切换期间蜂窝网络和短信会短暂中断。通话中或 eSIM 操作进行时不能切换。" = "Le réseau cellulaire et les SMS sont brièvement interrompus pendant le changement. Impossible de changer pendant un appel ou une opération eSIM.";
+"通话或语音清理期间不能切换 SIM 卡槽。" = "Impossible de changer d’emplacement SIM pendant un appel ou le nettoyage audio.";
+"eSIM 操作期间不能切换 SIM 卡槽。" = "Impossible de changer d’emplacement SIM pendant une opération eSIM.";
+"通话期间不能切换 SIM 卡槽。" = "Impossible de changer d’emplacement SIM pendant un appel.";
+"这个模组不支持切换 SIM 卡槽。" = "Ce module ne permet pas de changer d’emplacement SIM.";
+"卡槽编号无效。" = "Numéro d’emplacement non valide.";
+"无法读取当前 SIM 卡槽，未执行切换。" = "Impossible de lire l’emplacement SIM actuel. Aucun changement effectué.";
+"已在使用卡槽 %lld。" = "L’emplacement %lld est déjà utilisé.";
+"模块拒绝切换 SIM 卡槽。" = "Le module a refusé de changer d’emplacement SIM.";
+"切换卡槽后的回读校验失败。" = "Échec de la relecture après le changement d’emplacement.";
+"已切换到卡槽 %lld。" = "Emplacement %lld activé.";
+"已切换到卡槽 %lld，但没有检测到 SIM 卡。可以切换回原来的卡槽。" = "Emplacement %lld activé, mais aucune carte SIM n’a été détectée. Vous pouvez revenir à l’emplacement précédent.";
+"已切换到卡槽 %lld，这张 SIM 卡已锁定。" = "Emplacement %lld activé. Cette carte SIM est verrouillée.";
+"已切换到卡槽 %lld，SIM 卡仍在读取。" = "Emplacement %lld activé. La carte SIM est encore en cours de lecture.";
+"正在修复蜂窝网络连接，请稍后再切换卡槽。" = "La connexion cellulaire est en cours de réparation. Réessayez de changer d’emplacement plus tard.";
+"正在切换 SIM 卡槽，请稍后再发送短信。" = "Changement d’emplacement SIM en cours. Renvoyez le SMS dans un instant.";
+"正在切换 SIM 卡槽，请稍后再拨号。" = "Changement d’emplacement SIM en cours. Réessayez d’appeler dans un instant.";

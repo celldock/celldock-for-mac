@@ -207,6 +207,61 @@ struct ModemUSBConfiguration: Equatable {
     }
 }
 
+/// Decides which modules may use AT+QUIMSLOT. Single-slot modules such as the
+/// EG25 can still answer the command, so support is gated on the firmware
+/// identity first and the command is never sent to other modules.
+enum SIMSlotSwitchingPolicy {
+    static let slotCount = 2
+    static let dualSlotFirmwarePrefixes = ["RM520N"]
+
+    static func firmwareMayHaveDualSlots(_ firmwareVersion: String?) -> Bool {
+        guard let identity = firmwareVersion?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased(),
+              !identity.isEmpty else {
+            return false
+        }
+        return dualSlotFirmwarePrefixes.contains { identity.hasPrefix($0.uppercased()) }
+    }
+
+    static func isSupported(firmwareVersion: String?, reportedSlot: Int?) -> Bool {
+        guard firmwareMayHaveDualSlots(firmwareVersion),
+              let reportedSlot else {
+            return false
+        }
+        return (1 ... slotCount).contains(reportedSlot)
+    }
+}
+
+/// Decides when to ask for 5G registration. AT+CEREG? only covers LTE/EPS,
+/// so a 5G SA-registered RM520N reports "not registered" there. Other
+/// firmware never receives AT+C5GREG?.
+enum NR5GRegistrationPolicy {
+    static let firmwarePrefixes = ["RM520N"]
+
+    static func shouldQueryC5GREG(
+        firmwareVersion: String?,
+        epsRegistration: CellularRegistrationState
+    ) -> Bool {
+        guard !epsRegistration.hasService,
+              let identity = firmwareVersion?
+                  .trimmingCharacters(in: .whitespacesAndNewlines)
+                  .uppercased(),
+              !identity.isEmpty else {
+            return false
+        }
+        return firmwarePrefixes.contains { identity.hasPrefix($0.uppercased()) }
+    }
+
+    /// The 5G state replaces the EPS state only when +C5GREG parsed.
+    static func effectiveRegistration(
+        eps: CellularRegistrationState,
+        nr: CellularRegistrationState?
+    ) -> CellularRegistrationState {
+        nr ?? eps
+    }
+}
+
 struct ModemSnapshot: Equatable {
     var state: ModemConnectionState = .disconnected
     var lifecyclePhase: ModemLifecyclePhase = .normal
@@ -240,6 +295,10 @@ struct ModemSnapshot: Equatable {
     var usbConfiguration: ModemUSBConfiguration?
     var endpointDescription: String?
     var lastError: String?
+    /// Active SIM slot (1-based) reported by AT+QUIMSLOT? on dual-slot modules.
+    var simSlot: Int?
+    /// True only for known dual-slot firmware that also answered AT+QUIMSLOT?.
+    var simSlotSwitchingSupported: Bool = false
 
     var signalBars: Int {
         guard let signalDBm else { return 0 }
@@ -335,6 +394,13 @@ struct ModemSnapshot: Equatable {
                 return .needsIdentityConversion
             }
             return .unsupportedUSBConfiguration(usbConfiguration.compactDescription)
+        }
+        if normalizedIdentity == "2C7C:0801" {
+            // RM520N-GL: CellDock never writes USB configuration to this
+            // module, so any USBCFG is accepted and only ECM (usbnet 1) is
+            // usable. Other net modes are reported, never converted.
+            guard let usbNetMode else { return .inspecting }
+            return usbNetMode == 1 ? .ready : .unsupportedUSBNetMode(usbNetMode)
         }
         guard normalizedIdentity == "2C7C:0125" else {
             return .unsupportedIdentity(normalizedIdentity)
@@ -1061,6 +1127,9 @@ struct SMSMessage: Identifiable, Codable, Equatable {
     var direction: SMSDirection? = nil
     var deliveryState: SMSDeliveryState? = nil
     var deliveryDetail: String? = nil
+    /// SIM slot that was active when CellDock first saw this message. Nil for
+    /// single-slot modules and for messages stored before slot tracking.
+    var simSlot: Int? = nil
 
     var isOutgoing: Bool {
         direction == .outgoing
@@ -1189,6 +1258,9 @@ enum SMSMessageMerger {
                 candidate.readAt = previous.readAt
                 candidate.timestamp = previous.timestamp
                 candidate.firstSeenAt = previous.firstSeenAt
+                // Messages kept in module storage survive a slot switch; keep
+                // the slot recorded when the message was first seen.
+                candidate.simSlot = previous.simSlot
                 candidate.replaceModemReferences(
                     with: previous.effectiveModemReferences + candidate.effectiveModemReferences
                 )

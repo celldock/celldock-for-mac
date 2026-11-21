@@ -32,6 +32,7 @@ struct SIMManagementView: View {
     @State private var selection: Pane = .overview
     @State private var copiedField: String?
     @State private var pendingIncomingCallsEnabled: Bool?
+    @State private var pendingSIMSlot: Int?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
     @State private var deletingProfile: ESIMProfile?
@@ -131,6 +132,26 @@ struct SIMManagementView: View {
             }
         } message: {
             Text(L10n.tr("CellDock 会在%@中写入并回读 IMS=%lld，校验成功后再重启模块。蜂窝网络将短暂中断。", selectedModule?.displayName ?? L10n.tr("当前模组"), Int64(pendingIncomingCallsEnabled == true ? 1 : 0)))
+        }
+        .alert(
+            L10n.tr("切换到卡槽 %lld？", Int64(pendingSIMSlot ?? 1)),
+            isPresented: Binding(
+                get: { pendingSIMSlot != nil },
+                set: { if !$0 { pendingSIMSlot = nil } }
+            )
+        ) {
+            Button("取消", role: .cancel) { pendingSIMSlot = nil }
+            Button(L10n.tr("切换")) {
+                guard let slot = pendingSIMSlot else { return }
+                pendingSIMSlot = nil
+                appState.switchSIMSlot(slot, moduleID: selectedModuleID)
+            }
+        } message: {
+            Text(L10n.tr(
+                "卡槽 %lld 会离线，切回之前它收不到来电和短信。蜂窝网络会中断几秒，然后用卡槽 %lld 重新连接。",
+                Int64(selectedModem.simSlot ?? (pendingSIMSlot == 1 ? 2 : 1)),
+                Int64(pendingSIMSlot ?? 1)
+            ))
         }
     }
 
@@ -500,6 +521,9 @@ struct SIMManagementView: View {
                         overviewSIMCard
                         overviewDeviceInformationCard
                     } else if selection == .sim {
+                        if selectedModem.simSlotSwitchingSupported {
+                            simSlotCard
+                        }
                         simConnectionCard
                         basicInformationCard
                         identifierCard
@@ -1064,7 +1088,7 @@ struct SIMManagementView: View {
 
                 HStack(spacing: 8) {
                     overviewTag(selectedModule?.technologyName ?? L10n.tr("尚未读取"))
-                    overviewTag("SIM 1")
+                    overviewTag(selectedSIMSlotTag)
                     overviewTag("ICCID \(quickICCIDValue)")
                 }
             }
@@ -1420,13 +1444,163 @@ struct SIMManagementView: View {
         .adaptiveGlassCard()
     }
 
+    /// Single-slot modules keep the original "SIM 1" text.
+    private var selectedSIMSlotTag: String {
+        guard selectedModem.simSlotSwitchingSupported, let slot = selectedModem.simSlot else {
+            return "SIM 1"
+        }
+        return "SIM \(slot)"
+    }
+
+    private var basicInformationSlotText: String {
+        guard selectedModem.simSlotSwitchingSupported, let slot = selectedModem.simSlot else {
+            return "SIM 1"
+        }
+        return L10n.tr(
+            "卡槽 %lld（共 %lld 个）",
+            Int64(slot),
+            Int64(SIMSlotSwitchingPolicy.slotCount)
+        )
+    }
+
+    private var selectedSIMSlotSwitch: SIMSlotSwitchProgress? {
+        guard let progress = appState.simSlotSwitch,
+              progress.moduleID == selectedModule?.id else {
+            return nil
+        }
+        return progress
+    }
+
+    private var canSwitchSIMSlot: Bool {
+        appState.simSlotSwitch == nil &&
+            selectedModem.isConnected &&
+            selectedModem.simSlotSwitchingSupported &&
+            !appState.moduleHasCall(selectedModuleID) &&
+            !selectedEUICC.isBusy
+    }
+
+    private var simSlotCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.tr("卡槽"))
+                    .font(.headline)
+                Text(L10n.tr("同一时间只有一张卡在线"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.bottom, 6)
+
+            ForEach(1 ... SIMSlotSwitchingPolicy.slotCount, id: \.self) { slot in
+                Divider()
+                simSlotRow(slot)
+            }
+
+            if selectedSIMSlotSwitch != nil {
+                Divider()
+                Label(
+                    L10n.tr("切换期间蜂窝网络和短信会短暂中断。通话中或 eSIM 操作进行时不能切换。"),
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .adaptiveGlassCard()
+    }
+
+    private func simSlotRow(_ slot: Int) -> some View {
+        let progress = selectedSIMSlotSwitch
+        let isSwitchTarget = progress?.targetSlot == slot
+        let isGoingOffline = progress != nil && !isSwitchTarget
+        let isActive = progress == nil && selectedModem.simSlot == slot
+        let tint: Color = isSwitchTarget ? .blue : (isActive ? .green : .secondary)
+
+        return HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "simcard")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 38, height: 38)
+                .background(tint.opacity(0.10), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(L10n.tr("卡槽 %lld", Int64(slot)))
+                        .font(.headline)
+                    if isActive {
+                        ModuleRoleBadge(title: "使用中", tint: .green)
+                    } else {
+                        Text(
+                            isSwitchTarget
+                                ? L10n.tr("切换中")
+                                : (isGoingOffline ? L10n.tr("已离线") : L10n.tr("未启用"))
+                        )
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSwitchTarget ? Color.blue : Color.secondary)
+                    }
+                }
+
+                if isSwitchTarget {
+                    Text(L10n.tr("正在重新读取 SIM 卡"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(L10n.tr("大约需要 3 到 5 秒"))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else if isActive {
+                    Text(activeSIMSlotDetail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(L10n.tr("切换后读取这张卡的运营商和号码"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 16)
+
+            if isSwitchTarget {
+                ProgressView()
+                    .controlSize(.small)
+            } else if !isActive, !isGoingOffline {
+                Button(L10n.tr("切换到卡槽 %lld", Int64(slot))) {
+                    pendingSIMSlot = slot
+                }
+                .controlSize(.small)
+                .disabled(!canSwitchSIMSlot)
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var activeSIMSlotDetail: String {
+        switch selectedModem.simState {
+        case .ready:
+            var parts = [selectedModule?.carrierName ?? L10n.tr("运营商未识别")]
+            if !appState.isPresentationPrivacyEnabled, let suffix = selectedModule?.simSuffix {
+                parts.append(L10n.tr("尾号 %@", suffix))
+            }
+            return parts.joined(separator: " · ")
+        case .absent:
+            return L10n.tr("未插入 SIM 卡")
+        case .initializing, .unavailable:
+            return L10n.tr("正在读取")
+        case .pinRequired, .pukRequired, .queryFailed:
+            return selectedModule?.statusText ?? simStateText
+        }
+    }
+
     private var basicInformationCard: some View {
         VStack(spacing: 0) {
             informationRow(title: "电话号码", value: displayedPhoneNumber)
             Divider()
             informationRow(title: "运营商", value: selectedModem.operatorName ?? L10n.tr("尚未读取"))
             Divider()
-            informationRow(title: "卡槽", value: "SIM 1")
+            informationRow(title: "卡槽", value: basicInformationSlotText)
             Divider()
             informationRow(title: "网络类型", value: selectedModem.accessTechnology ?? L10n.tr("尚未读取"))
         }
@@ -1884,6 +2058,13 @@ private struct SIMModuleSidebarRow: View {
                         if showsESIMTag {
                             ModuleRoleBadge(title: "eSIM", tint: .purple)
                         }
+                        if let simSlotTitle = module.simSlotTitle {
+                            ModuleRoleBadge(
+                                title: simSlotTitle,
+                                tint: .secondary,
+                                localizesTitle: false
+                            )
+                        }
                     }
                 }
             }
@@ -1906,7 +2087,8 @@ private struct SIMModuleSidebarRow: View {
     }
 
     private var hasRoleTags: Bool {
-        showsCurrentInternetTag || showsIncomingCallsTag || showsESIMTag
+        showsCurrentInternetTag || showsIncomingCallsTag || showsESIMTag ||
+            module.simSlotTitle != nil
     }
 
     private var accessibilitySummary: String {
@@ -1914,6 +2096,7 @@ private struct SIMModuleSidebarRow: View {
         if showsCurrentInternetTag { parts.append(L10n.tr("当前上网")) }
         if showsIncomingCallsTag { parts.append(L10n.tr("接收来电已开启")) }
         if showsESIMTag { parts.append("eSIM") }
+        if let simSlotTitle = module.simSlotTitle { parts.append(simSlotTitle) }
         return parts.joined(separator: "，")
     }
 
@@ -1940,9 +2123,10 @@ private struct SIMModuleSidebarRow: View {
 private struct ModuleRoleBadge: View {
     let title: String
     let tint: Color
+    var localizesTitle = true
 
     var body: some View {
-        Text(L10n.tr(title))
+        Text(localizesTitle ? L10n.tr(title) : title)
             .font(.caption2.weight(.semibold))
             .foregroundStyle(tint)
             .padding(.horizontal, 7)

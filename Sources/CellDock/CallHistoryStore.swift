@@ -12,6 +12,8 @@ struct CallHistoryRecord: Identifiable, Codable, Equatable {
     let endReason: CallEndReason?
     var recordingID: UUID?
     var missedCallAcknowledged: Bool? = nil
+    /// SIM slot active on a dual-slot module when the call started.
+    var simSlot: Int? = nil
 
     var duration: TimeInterval {
         guard let connectedAt else { return 0 }
@@ -44,6 +46,7 @@ final class CallHistoryStore: ObservableObject {
         let startedAt: Date
         var connectedAt: Date?
         var recordingID: UUID?
+        var simSlot: Int?
     }
 
     private let fileURL: URL
@@ -72,6 +75,7 @@ final class CallHistoryStore: ObservableObject {
     func consume(
         previous: CallSnapshot,
         current: CallSnapshot,
+        simSlot: Int? = nil,
         now: Date = Date()
     ) -> CallHistoryRecord? {
         let key = pendingKey(for: current.moduleID ?? previous.moduleID)
@@ -84,7 +88,8 @@ final class CallHistoryStore: ObservableObject {
                 moduleID: current.moduleID,
                 startedAt: current.startedAt ?? now,
                 connectedAt: current.phase == .active ? (current.startedAt ?? now) : nil,
-                recordingID: nil
+                recordingID: nil,
+                simSlot: simSlot
             )
             if currentCallID == nil { currentCallID = callID }
         }
@@ -116,7 +121,8 @@ final class CallHistoryStore: ObservableObject {
             endedAt: now,
             endReason: endReason,
             recordingID: pendingCall.recordingID,
-            missedCallAcknowledged: isMissed ? false : nil
+            missedCallAcknowledged: isMissed ? false : nil,
+            simSlot: pendingCall.simSlot
         )
         records.insert(record, at: 0)
         if records.count > 1_000 {
