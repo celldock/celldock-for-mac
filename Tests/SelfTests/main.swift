@@ -1,5 +1,8 @@
+import CryptoKit
 import Darwin
 import Foundation
+import Network
+import Security
 
 enum SelfTestFailure: Error {
     case failed(String)
@@ -1828,6 +1831,125 @@ do {
             tlsFailure.diagnosticCode == "tls_trust:NSURLErrorDomain:-1200" &&
             tlsFailure.userMessage.contains("HTTPS 代理"),
         "eSIM TLS trust failure was not classified safely"
+    )
+    let gsmaRoots = EUICCServerTrust.gsmaRootCertificates
+    let gsmaRootFingerprint = gsmaRoots.first.map {
+        SHA256.hash(data: SecCertificateCopyData($0) as Data)
+            .map { String(format: "%02X", $0) }
+            .joined()
+    }
+    try expect(
+        gsmaRoots.count == 1 &&
+            gsmaRootFingerprint == "5E3E91FD454327C3AF5D32A7A73BBC59FE43AA7D85FD32D5DB44423F80A56BB3",
+        "bundled GSMA RSP2 Root CI1 does not match its published fingerprint"
+    )
+    // Eastcompeace SM-DP+ TLS leaf issued directly by GSMA RSP2 Root CI1 (issue #14).
+    let smdpLeafBase64 = """
+        MIIDrTCCA1SgAwIBAgIQFgFDcHZ1IrBVyBDFfRlrqTAKBggqhkjOPQQDAjBEMRgwFgYDVQQKEw9H
+        U00gQXNzb2NpYXRpb24xKDAmBgNVBAMTH0dTTSBBc3NvY2lhdGlvbiAtIFJTUDIgUm9vdCBDSTEw
+        HhcNMjUxMDIyMDAwMDAwWhcNMjYxMTIxMjM1OTU5WjCBpzELMAkGA1UEBhMCQ04xEjAQBgNVBAgM
+        CUdVQU5HRE9ORzEPMA0GA1UEBwwGWkhVSEFJMSowKAYDVQQKDCFFYXN0Y29tcGVhY2UgVGVjaG5v
+        bG9neSBDby4sIEx0ZC4xKjAoBgNVBAsMIUVhc3Rjb21wZWFjZSBUZWNobm9sb2d5IENvLiwgTHRk
+        LjEbMBkGA1UEAwwSKi5lYXN0Y29tcGVhY2UuY29tMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+        UqvK1I6o2vTCSHIeJHB1NyGzXGd365eYOz9kCZ7DiH0dGScz/EkOW2TONMilcWnNbdxQ4NEjv579
+        /oySBMUXgaOCAcIwggG+ME0GA1UdHwRGMEQwQqBAoD6GPGh0dHA6Ly9nc21hLWNybC5zeW1hdXRo
+        LmNvbS9vZmZsaW5lY2EvZ3NtYS1yc3AyLXJvb3QtY2kxLmNybDAOBgNVHQ8BAf8EBAMCB4AwFAYD
+        VR0gBA0wCzAJBgdngRIBAgEDMCAGA1UdJQEB/wQWMBQGCCsGAQUFBwMBBggrBgEFBQcDAjCB5AYD
+        VR0RBIHcMIHZghIqLmVhc3Rjb21wZWFjZS5jb22CDCoudG9wcnNwLmNvbYIWcnNwLmJpbGxpb25j
+        b25uZWN0LmNvbYIMKi5jbWxpbmsuY29tgg0qLmhvbGFmbHkuY29tgg8qLmVzaW1pbmZyYS5uZXSC
+        ECouZmlib3NpbWh1Yi5jb22CEHJzcC5vcGVucm9hbS5jb22CEHJzcC5lc2ltbmV4dC5jb22CDiou
+        Z2xvY2FsbWUuY29tggwqLnNpbXJzcC5jb22CEHJzcC5yb2FtZXNpbS5uZXSICSsGAQQBg4odATAd
+        BgNVHQ4EFgQUY54t5YAdtSJFa6I96lrhY4nSH7gwHwYDVR0jBBgwFoAUgTcPUSXQsdQI1MOyMubS
+        Xnlb6/swCgYIKoZIzj0EAwIDRwAwRAIgGRH8ockvzjiB5BdkGNexHFTObxmQ/IcHHywVOuHBmPcC
+        IHo9Bq8oG3YMuTnSZAPNluMwyG4lY1WqEJ2RCo0aFn3T
+        """
+    guard let smdpLeafData = Data(base64Encoded: smdpLeafBase64, options: .ignoreUnknownCharacters),
+          let smdpLeaf = SecCertificateCreateWithData(nil, smdpLeafData as CFData) else {
+        throw SelfTestFailure.failed("SM-DP+ TLS leaf fixture could not be decoded")
+    }
+    let smdpCheckDate = Date(timeIntervalSince1970: 1_789_000_000) // 2026-09-10
+    try expect(
+        EUICCServerTrust.gsmaTrust(
+            for: [smdpLeaf], host: "ecprsp.eastcompeace.com", verifyDate: smdpCheckDate
+        ) != nil &&
+            EUICCServerTrust.gsmaTrust(
+                for: [smdpLeaf] + gsmaRoots, host: "ecprsp.eastcompeace.com", verifyDate: smdpCheckDate
+            ) != nil,
+        "GSMA-issued SM-DP+ TLS certificate was rejected"
+    )
+    try expect(
+        EUICCServerTrust.gsmaTrust(
+            for: [smdpLeaf], host: "smdp.example.com", verifyDate: smdpCheckDate
+        ) == nil,
+        "GSMA trust accepted an SM-DP+ certificate for the wrong host"
+    )
+    try expect(
+        EUICCServerTrust.gsmaTrust(
+            for: [smdpLeaf],
+            host: "ecprsp.eastcompeace.com",
+            verifyDate: Date(timeIntervalSince1970: 1_800_000_000) // 2027-01-15
+        ) == nil,
+        "GSMA trust accepted an expired SM-DP+ certificate"
+    )
+    let es9Request = EUICCHTTPSClient.makeRequest(
+        url: URL(string: "https://smdp.example.com/gsma/rsp2/es9plus/initiateAuthentication")!,
+        headers: [
+            (name: "Content-Type", value: "application/json"),
+            (name: "Host", value: "attacker.example.com"),
+            (name: "Content-Length", value: "999")
+        ],
+        body: Data("{}".utf8)
+    ).flatMap { String(data: $0, encoding: .utf8) }
+    try expect(
+        es9Request == "POST /gsma/rsp2/es9plus/initiateAuthentication HTTP/1.1\r\n" +
+            "Host: smdp.example.com\r\nContent-Length: 2\r\nConnection: close\r\n" +
+            "Content-Type: application/json\r\n\r\n{}",
+        "ES9+ HTTP request was not framed safely"
+    )
+    try expect(
+        EUICCHTTPSClient.makeRequest(
+            url: URL(string: "https://smdp.example.com/")!,
+            headers: [(name: "X-Test", value: "a\r\nInjected: 1")],
+            body: Data()
+        ) == nil &&
+            EUICCHTTPSClient.makeRequest(
+                url: URL(string: "http://smdp.example.com/")!, headers: [], body: Data()
+            ) == nil,
+        "ES9+ HTTP request accepted header injection or plain HTTP"
+    )
+    func parsedES9(_ raw: String, closed: Bool = false) -> EUICCHTTPSClient.ParseResult {
+        EUICCHTTPSClient.parseResponse(Data(raw.utf8), isComplete: closed)
+    }
+    func es9Response(_ status: Int, _ body: String) -> EUICCHTTPSClient.ParseResult {
+        .complete(EUICCHTTPSClient.Response(status: status, body: Data(body.utf8)))
+    }
+    try expect(
+        parsedES9("HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"a\":1}") == es9Response(200, "{\"a\":1}") &&
+            parsedES9("HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"a\"") == .incomplete &&
+            parsedES9("HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n{\"a\"", closed: true) == .invalid &&
+            parsedES9("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 204 No Content\r\n\r\n") == es9Response(204, "") &&
+            parsedES9("HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 0\r\n\r\n") == es9Response(302, ""),
+        "ES9+ HTTP response with Content-Length was not parsed"
+    )
+    try expect(
+        parsedES9("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4;ext=1\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n") ==
+            es9Response(200, "Wikipedia") &&
+            parsedES9("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWiki\r\n") == .incomplete &&
+            parsedES9("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWikiX\r\n0\r\n\r\n") == .invalid,
+        "ES9+ chunked HTTP response was not parsed"
+    )
+    try expect(
+        parsedES9("HTTP/1.1 200 OK\r\n\r\nuntil-close") == .incomplete &&
+            parsedES9("HTTP/1.1 200 OK\r\n\r\nuntil-close", closed: true) == es9Response(200, "until-close") &&
+            parsedES9("SSH-2.0-OpenSSH\r\n\r\n") == .invalid,
+        "ES9+ HTTP response framing was not validated"
+    )
+    let tlsHandshakeFailure = EUICCHTTPSClient.failure(for: .tls(errSSLBadCert))
+    try expect(
+        tlsHandshakeFailure.kind == .tlsTrust &&
+            EUICCHTTPSClient.failure(for: .posix(.ETIMEDOUT)).kind == .timedOut &&
+            EUICCHTTPSClient.failure(for: .posix(.ECONNREFUSED)).kind == .transport,
+        "ES9+ Network.framework errors were not classified"
     )
     let timeoutFailure = EUICCHTTPFailure(error: URLError(.timedOut))
     try expect(
