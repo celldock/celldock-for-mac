@@ -262,6 +262,94 @@ enum NR5GRegistrationPolicy {
     }
 }
 
+/// How long a module that was told to restart may take to bring its USB and
+/// AT interface back before CellDock reports a failure.
+enum ModuleRestartPolicy {
+    /// The 45 seconds were measured on the QDC507. A 5G module such as the
+    /// RM520N-GL boots a larger system and regularly needs longer, so the same
+    /// limit reported a failed restart while the module was still starting.
+    static func reconnectWindow(usbIdentity: String?) -> TimeInterval {
+        usbIdentity?.uppercased() == "2C7C:0801" ? 90 : 45
+    }
+
+    /// The network recovery waits a little longer than the AT session does,
+    /// because the ECM interface appears after the AT port.
+    static func networkRecoveryWindow(usbIdentity: String?) -> TimeInterval {
+        reconnectWindow(usbIdentity: usbIdentity) + 15
+    }
+
+    /// How long a module may stay on the bus after AT+CFUN=1,1 before it is
+    /// treated as one that ignored the restart. An AT port that still opens
+    /// inside this time belongs to the instance that is shutting down and must
+    /// not be initialized. The QDC507 drops off within 5 seconds; an
+    /// RM520N-GL was measured at 5.6 seconds, which made the 5-second limit
+    /// reconnect to the dying module.
+    static func shutdownGrace(usbIdentity: String?) -> TimeInterval {
+        usbIdentity?.uppercased() == "2C7C:0801" ? 20 : 5
+    }
+}
+
+/// Decisions around a call whose existence could not be confirmed.
+enum CallRecoveryPolicy {
+    /// AT+CLCC is read before a freshly opened module is initialized. When it
+    /// fails while a restart is expected, the failure is the module going
+    /// down or still booting. Treating it as "a call may exist" parked the
+    /// service in call recovery, bound to the instance that was about to
+    /// disappear.
+    static func unreadableCallStateMeansRestart(isExpectingModuleRestart: Bool) -> Bool {
+        isExpectingModuleRestart
+    }
+
+    /// Whether a module that came back as a new USB enumeration may be
+    /// adopted while the service is still in call recovery.
+    ///
+    /// A confirmed call stays bound to its module instance: another module
+    /// must never be mistaken for it. A recovery that only exists because the
+    /// call state could not be read protects nothing once that instance is
+    /// gone, and refusing the new one left the AT session down for good.
+    static func mayAdoptReenumeratedModule(
+        callPresenceWasNeverConfirmed: Bool,
+        hasPendingMediaCleanup: Bool
+    ) -> Bool {
+        callPresenceWasNeverConfirmed && !hasPendingMediaCleanup
+    }
+}
+
+/// Rules for handing an SMS to the module.
+enum SMSSubmissionPolicy {
+    /// How long to wait for +CMGS or +CMS ERROR after the PDU was written.
+    /// Quectel documents a network-bound maximum of 120 seconds for AT+CMGS.
+    /// Giving up earlier abandons a command the module is still executing:
+    /// the AT port then stays busy, the session has to be torn down, and the
+    /// real result (usually a +CMS ERROR that explains the failure) is lost.
+    static let confirmationTimeoutMilliseconds: Int32 = 150_000
+
+    /// Whether the module has any service to submit on. Only a definite
+    /// "no service" in every domain blocks the send; a failed or unknown
+    /// query must not, because the registration commands themselves can fail
+    /// on firmware where SMS still works.
+    static func canSubmit(
+        packet: CellularRegistrationState,
+        voice: CellularRegistrationState
+    ) -> Bool {
+        if packet.hasService || voice.hasService { return true }
+        return !(packet.isDefinitelyWithoutService && voice.isDefinitelyWithoutService)
+    }
+}
+
+extension CellularRegistrationState {
+    /// The module answered and said it is not on a network. `.unknown`,
+    /// `.unavailable` and `.queryFailed` are deliberately excluded.
+    var isDefinitelyWithoutService: Bool {
+        switch self {
+        case .notRegistered, .searching, .denied:
+            return true
+        case .unavailable, .registered, .unknown, .roaming, .queryFailed:
+            return false
+        }
+    }
+}
+
 struct ModemSnapshot: Equatable {
     var state: ModemConnectionState = .disconnected
     var lifecyclePhase: ModemLifecyclePhase = .normal

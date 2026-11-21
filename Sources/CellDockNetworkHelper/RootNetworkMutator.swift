@@ -81,7 +81,7 @@ final class RootNetworkMutator {
                       SCNetworkServiceEstablishDefaultConfiguration(created),
                       SCNetworkServiceSetName(
                           created,
-                          "QDC507 蜂窝网络 \(String(locationID, radix: 16))" as NSString
+                          serviceName(for: interface, locationID: locationID) as NSString
                       ),
                       SCNetworkSetAddService(networkSet, created) else {
                     return .failure(systemConfigurationError("无法创建模组网络服务"))
@@ -301,6 +301,10 @@ final class RootNetworkMutator {
         SCPreferencesUnlock(preferences)
         preferencesLocked = false
 
+        // Every enabled module gets its turn. Returning at the first failure
+        // left the remaining modules without a DHCP attempt, so one dead
+        // module kept healthy ones offline too.
+        var firstFailure: HelperActionResult?
         for locationID in request.enabledLocationIDs {
             guard let service = serviceByLocation[locationID],
                   let serviceID = SCNetworkServiceGetServiceID(service) as String?,
@@ -317,12 +321,18 @@ final class RootNetworkMutator {
                    on: bsdName,
                    locationID: locationID
                ) {
-                return .failure(
-                    "模组 0x\(String(locationID, radix: 16)) 已启用，但 \(failure.message)",
-                    code: failure.code
+                rootNetworkLogger.error(
+                    "Module network bring-up failed location=\(locationID, privacy: .public) reason=\(failure.message, privacy: .public)"
                 )
+                if firstFailure == nil {
+                    firstFailure = .failure(
+                        "模组 0x\(String(locationID, radix: 16)) 已启用，但 \(failure.message)",
+                        code: failure.code
+                    )
+                }
             }
         }
+        if let firstFailure { return firstFailure }
 
         if isTurningEverythingOff {
             return .success("已关闭所有蜂窝网络服务，并恢复原网络顺序。")
@@ -429,13 +439,11 @@ final class RootNetworkMutator {
         on bsdName: String,
         locationID: UInt32
     ) -> DHCPFailure? {
-        guard matchesTargetModem(
-            usbIdentity(forBSDName: bsdName),
-            locationID: locationID
-        ) else {
+        let identity = usbIdentity(forBSDName: bsdName)
+        guard let identity, matchesTargetModem(identity, locationID: locationID) else {
             return DHCPFailure(
                 code: .failure,
-                message: "拒绝刷新非 QDC507 网络接口 \(bsdName) 的 DHCP。"
+                message: "拒绝刷新非受支持模组的网络接口 \(bsdName) 的 DHCP。"
             )
         }
 
@@ -456,7 +464,7 @@ final class RootNetworkMutator {
             rootNetworkLogger.notice(
                 "ECM link is inactive after service enable; forcing interface up interface=\(bsdName, privacy: .public)"
             )
-            let interfaceUpError = runIFConfigUp(on: bsdName)
+            let interfaceUpError = runIFConfig("up", on: bsdName)
             if let interfaceUpError {
                 rootNetworkLogger.error(
                     "Unable to force ECM interface up interface=\(bsdName, privacy: .public) error=\(interfaceUpError, privacy: .public)"
@@ -467,7 +475,11 @@ final class RootNetworkMutator {
             // delay), which is what the module-side recovery budgets. Waiting
             // only 18s here declared healthy-but-slow modules dead and pushed
             // them into an unnecessary power cycle.
-            guard waitForLinkActive(on: bsdName, timeout: 28.0) else {
+            let activationTimeout = CellDockModemNetworkIdentity.linkActivationTimeout(
+                vendorID: identity.vendorID,
+                productID: identity.productID
+            )
+            guard waitForLinkActive(on: bsdName, timeout: activationTimeout) else {
                 let suffix = interfaceUpError.map { "；ifconfig：\($0)" } ?? ""
                 return DHCPFailure(
                     code: .linkInactive,
@@ -613,11 +625,11 @@ final class RootNetworkMutator {
         return nil
     }
 
-    private func runIFConfigUp(on bsdName: String) -> String? {
+    private func runIFConfig(_ action: String, on bsdName: String) -> String? {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/sbin/ifconfig")
-        process.arguments = [bsdName, "up"]
+        process.arguments = [bsdName, action]
         process.standardOutput = output
         process.standardError = output
         process.standardInput = FileHandle.nullDevice
@@ -633,7 +645,7 @@ final class RootNetworkMutator {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             return detail?.isEmpty == false
                 ? detail
-                : "ifconfig up 返回状态 \(process.terminationStatus)"
+                : "ifconfig \(action) 返回状态 \(process.terminationStatus)"
         }
         return nil
     }
@@ -648,6 +660,16 @@ final class RootNetworkMutator {
     /// This is the only identifier that survives once the hardware is detached.
     private func isKnownModemInterfaceName(_ value: String?) -> Bool {
         CellDockModemNetworkIdentity.isKnownInterfaceName(value)
+    }
+
+    private func serviceName(for interface: SCNetworkInterface, locationID: UInt32) -> String {
+        let identity = (SCNetworkInterfaceGetBSDName(interface) as String?)
+            .flatMap(usbIdentity(forBSDName:))
+        return CellDockModemNetworkIdentity.serviceName(
+            vendorID: identity?.vendorID ?? 0,
+            productID: identity?.productID ?? 0,
+            locationID: locationID
+        )
     }
 
     private func matchesTargetModem(

@@ -90,7 +90,7 @@ final class SOCKS5UpstreamAssociation {
         let control = try BoundSocket(family: family, kind: .tcp, bsdName: bsdName)
         self.control = control
         try control.setTimeout(seconds: 8)
-        try control.connect(to: proxyAddress, port: configuration.port)
+        try control.connect(to: proxyAddress, port: configuration.port, timeoutSeconds: 8)
 
         var methods: [UInt8] = [SOCKSAuthenticationMethod.none.rawValue]
         if configuration.username != nil { methods.append(SOCKSAuthenticationMethod.usernamePassword.rawValue) }

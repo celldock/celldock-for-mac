@@ -145,6 +145,13 @@ int celldock_modem_read(
 const char *celldock_modem_last_error(const CellDockModem *modem);
 
 /*
+ * Whether a result code from the command functions means "no terminal
+ * response arrived in time". Callers use it to tell a slow network apart
+ * from a broken USB transport without parsing the English error text.
+ */
+int celldock_modem_result_is_timeout(int result);
+
+/*
  * Raw voice-over-USB transport for QPCMV option 0. This opens only USB
  * interface 1 (the NMEA/PCM port); it never opens or resets the parent USB
  * device and therefore can run alongside the AT and CDC-ECM interfaces.

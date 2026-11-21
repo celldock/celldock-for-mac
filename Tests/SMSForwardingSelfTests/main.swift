@@ -44,6 +44,30 @@ do {
         "urlEncodedQueryValue did not percent-encode reserved query characters"
     )
 
+    // Feishu and DingTalk reply HTTP 200 either way; the body decides.
+    func rejection(_ json: String, _ keys: [String]) -> String? {
+        SMSForwardingSigning.webhookRejection(in: Data(json.utf8), resultCodeKeys: keys)
+    }
+    try expect(
+        rejection(#"{"errcode":0,"errmsg":"ok"}"#, ["errcode"]) == nil &&
+            rejection(
+                #"{"StatusCode":0,"StatusMessage":"success","code":0,"data":{},"msg":"success"}"#,
+                ["code", "StatusCode"]
+            ) == nil &&
+            rejection("", ["errcode"]) == nil &&
+            rejection("not json", ["errcode"]) == nil &&
+            rejection(#"{"errcode":310000,"errmsg":"sign not match"}"#, []) == nil,
+        "an accepted webhook reply was reported as a rejection"
+    )
+    try expect(
+        rejection(#"{"errcode":310000,"errmsg":"keywords not in content"}"#, ["errcode"]) ==
+            "310000 keywords not in content" &&
+            rejection(#"{"code":19021,"msg":"sign match fail"}"#, ["code", "StatusCode"]) ==
+            "19021 sign match fail" &&
+            rejection(#"{"errcode":"130101"}"#, ["errcode"]) == "130101",
+        "a rejected webhook reply was reported as delivered"
+    )
+
     print("All SMSForwardingSelfTests passed.")
 } catch {
     print("SMSForwardingSelfTests FAILED: \(error)")

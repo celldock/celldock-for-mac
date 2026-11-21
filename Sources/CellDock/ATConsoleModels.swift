@@ -76,3 +76,24 @@ enum ATConsoleCommandValidator {
         return command
     }
 }
+
+/// How long the console waits for one command.
+///
+/// A command that times out forces the AT session to be torn down and rebuilt,
+/// and the module keeps executing it meanwhile, so the port stays busy and the
+/// module looks offline. Commands whose documented maximum response time is
+/// bound by the network therefore get that maximum instead of the default.
+enum ATConsoleCommandTimeoutPolicy {
+    static let defaultMilliseconds = 15_000
+
+    static func timeoutMilliseconds(for command: String) -> Int {
+        let compact = command.uppercased().replacingOccurrences(of: " ", with: "")
+        // Operator scan and selection: up to 180 s.
+        if compact.hasPrefix("AT+COPS=") { return 180_000 }
+        // Packet-domain attach and PDP activation: up to 140 s and 150 s.
+        // Their test forms (=?) only list parameters and answer at once.
+        if compact.hasPrefix("AT+CGATT="), !compact.hasPrefix("AT+CGATT=?") { return 140_000 }
+        if compact.hasPrefix("AT+CGACT="), !compact.hasPrefix("AT+CGACT=?") { return 150_000 }
+        return defaultMilliseconds
+    }
+}

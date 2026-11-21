@@ -8,7 +8,7 @@ public enum CellDockNetworkIPC {
     /// Bump whenever either the helper or its installed VoWiFi runtime changes;
     /// the identity mismatch is what makes the app run the authenticated
     /// installer and replace both root-owned executables atomically.
-    public static let helperBuildVersion = 16
+    public static let helperBuildVersion = 17
     public static let helperIdentity = "CellDock Network Helper/\(helperBuildVersion)"
     public static let helperLabel = "app.celldock.mac.network.helper"
     public static let helperExecutableName = "CellDockNetworkHelper"
@@ -45,6 +45,34 @@ public enum CellDockModemNetworkIdentity {
     public static func isKnownInterfaceName(_ value: String?) -> Bool {
         guard let normalized = value?.lowercased() else { return false }
         return knownInterfaceNameFragments.contains { normalized.contains($0) }
+    }
+
+    /// How long the helper waits for the ECM carrier after enabling a service.
+    ///
+    /// A QDC507 rejoining its internal bridge needs about 26 seconds, so it
+    /// gets 28. The RM520N-GL has no such bridge: its carrier is either there
+    /// within a few seconds or stays down until the module itself is
+    /// restarted. Resetting the Mac-side interface (ifconfig down, then up)
+    /// was measured on an RM520N-GL whose link had died across a system sleep
+    /// and did not bring the carrier back, so waiting longer or flapping the
+    /// interface only delays the restart that does.
+    public static func linkActivationTimeout(
+        vendorID: Int,
+        productID: Int
+    ) -> TimeInterval {
+        vendorID == 0x2C7C && productID == 0x0801 ? 10 : 28
+    }
+
+    /// Name for a network service the helper has to create. It used to say
+    /// "QDC507" for every module, which mislabelled an RM520N-GL in System
+    /// Settings.
+    public static func serviceName(
+        vendorID: Int,
+        productID: Int,
+        locationID: UInt32
+    ) -> String {
+        let model = vendorID == 0x2C7C && productID == 0x0801 ? "RM520N-GL" : "QDC507"
+        return "\(model) 蜂窝网络 \(String(locationID, radix: 16))"
     }
 }
 

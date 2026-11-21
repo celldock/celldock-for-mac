@@ -95,6 +95,7 @@ final class BoundSocket {
     let interfaceIndex: UInt32
 
     private(set) var fileDescriptor: Int32
+    private var connectTimeoutSeconds: Int?
 
     init(family: BoundSocketFamily, kind: BoundSocketKind, bsdName: String) throws {
         errno = 0
@@ -160,10 +161,17 @@ final class BoundSocket {
 
     /// Connects TCP or UDP to a numeric address. Domain names are deliberately
     /// rejected so callers cannot accidentally use the system resolver.
-    func connect(to address: SOCKSAddress, port: UInt16) throws {
+    ///
+    /// `timeoutSeconds` bounds the wait for a TCP handshake. It has to be
+    /// enforced here: on macOS neither SO_SNDTIMEO nor SO_RCVTIMEO limits a
+    /// blocking `connect`, which otherwise sits in the kernel for about 75
+    /// seconds when the destination never answers.
+    func connect(to address: SOCKSAddress, port: UInt16, timeoutSeconds: Int? = nil) throws {
         guard fileDescriptor >= 0 else {
             throw BoundSocketError.systemCall(operation: "connect", code: EBADF)
         }
+        connectTimeoutSeconds = timeoutSeconds
+        defer { connectTimeoutSeconds = nil }
         switch address {
         case let .ipv4(bytes):
             guard family == .ipv4 else { throw BoundSocketError.addressFamilyMismatch }
@@ -225,13 +233,26 @@ final class BoundSocket {
     }
 
     func setNonBlocking() throws {
+        try setNonBlocking(true)
+    }
+
+    private func setNonBlocking(_ enabled: Bool) throws {
         let flags = fcntl(fileDescriptor, F_GETFL, 0)
         guard flags >= 0 else {
             throw BoundSocketError.systemCall(operation: "F_GETFL", code: errno)
         }
-        guard fcntl(fileDescriptor, F_SETFL, flags | O_NONBLOCK) >= 0 else {
+        let updated = enabled ? flags | O_NONBLOCK : flags & ~O_NONBLOCK
+        guard fcntl(fileDescriptor, F_SETFL, updated) >= 0 else {
             throw BoundSocketError.systemCall(operation: "F_SETFL", code: errno)
         }
+    }
+
+    /// Closes only the sending direction. The peer sees end-of-stream while
+    /// its remaining response can still be read, which is what a client that
+    /// half-closes its side of a proxied connection expects.
+    func shutdownWrite() {
+        guard fileDescriptor >= 0 else { return }
+        _ = Darwin.shutdown(fileDescriptor, SHUT_WR)
     }
 
     /// Non-blocking read that reports "nothing yet" and "peer closed" as states
@@ -348,13 +369,69 @@ final class BoundSocket {
     }
 
     private func connectPointer<T>(to address: inout T, length: socklen_t) throws {
+        guard let timeoutSeconds = connectTimeoutSeconds, timeoutSeconds > 0 else {
+            let result = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.connect(fileDescriptor, $0, length)
+                }
+            }
+            guard result == 0 else {
+                throw BoundSocketError.systemCall(operation: "connect", code: errno)
+            }
+            return
+        }
+
+        // Start the handshake without blocking, then wait for it with poll so
+        // the wait has a real upper bound. The descriptor is handed back in
+        // blocking mode, exactly as an untimed connect leaves it.
+        try setNonBlocking(true)
         let result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 Darwin.connect(fileDescriptor, $0, length)
             }
         }
-        guard result == 0 else {
-            throw BoundSocketError.systemCall(operation: "connect", code: errno)
+        if result != 0 {
+            let code = errno
+            guard code == EINPROGRESS || code == EINTR else {
+                throw BoundSocketError.systemCall(operation: "connect", code: code)
+            }
+            try waitUntilConnected(timeoutSeconds: timeoutSeconds)
+        }
+        try setNonBlocking(false)
+    }
+
+    private func waitUntilConnected(timeoutSeconds: Int) throws {
+        let deadline = DispatchTime.now().uptimeNanoseconds +
+            UInt64(timeoutSeconds) * 1_000_000_000
+        while true {
+            let now = DispatchTime.now().uptimeNanoseconds
+            guard now < deadline else {
+                throw BoundSocketError.systemCall(operation: "connect", code: ETIMEDOUT)
+            }
+            let remainingMilliseconds = Int32(min((deadline - now) / 1_000_000 + 1, 60_000))
+            var descriptor = pollfd(fd: fileDescriptor, events: Int16(POLLOUT), revents: 0)
+            let ready = poll(&descriptor, 1, remainingMilliseconds)
+            if ready < 0 {
+                if errno == EINTR { continue }
+                throw BoundSocketError.systemCall(operation: "connect", code: errno)
+            }
+            if ready == 0 { continue }
+
+            var socketError: Int32 = 0
+            var size = socklen_t(MemoryLayout<Int32>.size)
+            guard getsockopt(
+                fileDescriptor,
+                SOL_SOCKET,
+                SO_ERROR,
+                &socketError,
+                &size
+            ) == 0 else {
+                throw BoundSocketError.systemCall(operation: "connect", code: errno)
+            }
+            guard socketError == 0 else {
+                throw BoundSocketError.systemCall(operation: "connect", code: socketError)
+            }
+            return
         }
     }
 }

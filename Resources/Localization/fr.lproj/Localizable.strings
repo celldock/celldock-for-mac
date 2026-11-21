@@ -1078,6 +1078,8 @@
 "模块未返回 OK。" = "Le module n’a pas renvoyé OK.";
 "模块未连接，无法从 SIM/模块中删除短信。" = "Le module n’est pas connecté. Impossible de supprimer le SMS de la SIM ou du module.";
 "模块未连接，无法发送短信。" = "Le module n’est pas connecté. Impossible d’envoyer un SMS.";
+"模组尚未注册到蜂窝网络，无法发送短信。" = "Le module n’est pas enregistré sur un réseau cellulaire. Impossible d’envoyer un SMS.";
+"模组在 %lld 秒内没有返回发送确认；短信状态未知，请勿直接重发。" = "Le module n’a pas confirmé l’envoi dans les %lld secondes. L’état du SMS est inconnu : ne le renvoyez pas tel quel.";
 "模块未连接，无法执行 AT 命令。" = "Le module n’est pas connecté. Impossible d’exécuter une commande AT.";
 "模块未连接，无法拨号。" = "Le module n’est pas connecté. Impossible de passer un appel.";
 "模块未连接，无法接听。" = "Le module n’est pas connecté. Impossible de répondre.";
@@ -1102,7 +1104,7 @@
 "模组拒绝解锁，未执行配置写入。" = "Le module a refusé le déverrouillage. Aucune configuration écrite.";
 "模组正在重启" = "Redémarrage du module…";
 "模组详情" = "Détails du module";
-"模组重启后 45 秒内未恢复 USB/AT 接口。" = "L’interface USB/AT n’a pas été rétablie dans les 45 secondes suivant le redémarrage du module.";
+"模组重启后 %lld 秒内未恢复 USB/AT 接口。" = "L’interface USB/AT n’a pas été rétablie dans les %lld secondes suivant le redémarrage du module.";
 "正在保存录音…" = "Enregistrement en cours…";
 "正在准备%@的 ECM 链路…" = "Préparation de la liaison ECM de %@…";
 "正在准备目标模组的 ECM 链路…" = "Préparation de la liaison ECM du module cible…";
@@ -1165,7 +1167,7 @@
 "目标模组服务尚未就绪。" = "Le service du module cible n’est pas encore prêt.";
 "目标模组未能联网，已恢复原上网模组。" = "Le module cible n’a pas pu se connecter à Internet. Le module d’origine a été rétabli.";
 "目标模组的 AT 服务已断开，无法执行自动重启。" = "Le service AT du module cible est déconnecté. Impossible d’effectuer le redémarrage automatique.";
-"目标模组重启后 60 秒内未恢复 AT 接口，请拔下后重新插入。" = "L’interface AT n’a pas été rétablie dans les 60 secondes suivant le redémarrage du module cible. Débranchez puis rebranchez-le.";
+"目标模组重启后 %lld 秒内未恢复 AT 接口，请拔下后重新插入。" = "L’interface AT n’a pas été rétablie dans les %lld secondes suivant le redémarrage du module cible. Débranchez puis rebranchez-le.";
 "直接点击或使用 Mac 键盘" = "Cliquez directement ou utilisez le clavier du Mac";
 "短信 PDU 不是有效的十六进制数据" = "Le PDU du SMS n’est pas une donnée hexadécimale valide";
 "短信 PDU 在 %@ 处不完整" = "Le PDU du SMS est incomplet à %@";

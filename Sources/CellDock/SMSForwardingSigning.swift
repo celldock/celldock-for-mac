@@ -26,6 +26,34 @@ enum SMSForwardingSigning {
         return Data(mac).base64EncodedString()
     }
 
+    /// Reads a webhook's own verdict out of its JSON reply.
+    ///
+    /// Feishu and DingTalk answer HTTP 200 whether or not they accepted the
+    /// message; the outcome is a numeric code in the body, zero for success.
+    /// Returns a short description when one of `resultCodeKeys` holds a
+    /// non-zero code, and nil when the message was accepted or the body has no
+    /// such field (some gateways reply with an empty body on success).
+    static func webhookRejection(in body: Data, resultCodeKeys: [String]) -> String? {
+        guard !resultCodeKeys.isEmpty,
+              let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+            return nil
+        }
+        for key in resultCodeKeys {
+            let code: Int?
+            switch object[key] {
+            case let number as NSNumber: code = number.intValue
+            case let text as String: code = Int(text.trimmingCharacters(in: .whitespaces))
+            default: code = nil
+            }
+            guard let code, code != 0 else { continue }
+            let message = ["msg", "errmsg", "StatusMessage"]
+                .compactMap { object[$0] as? String }
+                .first { !$0.isEmpty }
+            return message.map { "\(code) \($0)" } ?? String(code)
+        }
+        return nil
+    }
+
     /// Percent-encodes a base64 signature for safe inclusion in a URL query
     /// component (base64 can contain `+`, `/`, `=`).
     static func urlEncodedQueryValue(_ value: String) -> String {

@@ -832,6 +832,18 @@ static int is_timeout(IOReturn result) {
     return result == kIOUSBTransactionTimeout || result == kIOReturnTimeout;
 }
 
+int celldock_modem_result_is_timeout(int result) {
+    /*
+     * kIOUSBTransactionTimeout is 0xE0004051 on older SDKs and an alias of
+     * kIOReturnTimeout (0xE00002D6) on newer ones; accept both spellings so
+     * the answer does not depend on the SDK this file was built against.
+     */
+    IOReturn code = (IOReturn)result;
+    return is_timeout(code) ||
+        code == (IOReturn)0xE0004051 ||
+        code == (IOReturn)0xE00002D6;
+}
+
 static uint64_t monotonic_milliseconds(void) {
     struct timespec value = {0, 0};
     (void)clock_gettime(CLOCK_MONOTONIC, &value);
