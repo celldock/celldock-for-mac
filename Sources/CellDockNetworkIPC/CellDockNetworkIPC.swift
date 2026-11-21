@@ -47,29 +47,20 @@ public enum CellDockModemNetworkIdentity {
         return knownInterfaceNameFragments.contains { normalized.contains($0) }
     }
 
-    /// Whether a dead ECM carrier on this module is worth a Mac-side interface
-    /// reset (down, then up) before waiting for it.
+    /// How long the helper waits for the ECM carrier after enabling a service.
     ///
-    /// The RM520N-GL exposes nothing that can be repaired from inside, and
-    /// after a system sleep its carrier commonly stays down until the host
-    /// selects the data interface again. The QDC507 is excluded on purpose:
-    /// its link is repaired inside the module, and flapping the host side
-    /// restarts that module's bridge forwarding delay.
-    public static func resetsHostInterfaceWhenLinkIsDown(
-        vendorID: Int,
-        productID: Int
-    ) -> Bool {
-        vendorID == 0x2C7C && productID == 0x0801
-    }
-
-    /// How long to wait for the carrier after the interface was forced up.
-    /// A QDC507 rejoining its internal bridge needs about 26 seconds; a host
-    /// interface reset either works within a few seconds or not at all.
+    /// A QDC507 rejoining its internal bridge needs about 26 seconds, so it
+    /// gets 28. The RM520N-GL has no such bridge: its carrier is either there
+    /// within a few seconds or stays down until the module itself is
+    /// restarted. Resetting the Mac-side interface (ifconfig down, then up)
+    /// was measured on an RM520N-GL whose link had died across a system sleep
+    /// and did not bring the carrier back, so waiting longer or flapping the
+    /// interface only delays the restart that does.
     public static func linkActivationTimeout(
         vendorID: Int,
         productID: Int
     ) -> TimeInterval {
-        resetsHostInterfaceWhenLinkIsDown(vendorID: vendorID, productID: productID) ? 15 : 28
+        vendorID == 0x2C7C && productID == 0x0801 ? 10 : 28
     }
 
     /// Name for a network service the helper has to create. It used to say

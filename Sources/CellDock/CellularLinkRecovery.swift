@@ -8,18 +8,19 @@ enum CellularLinkRepairStrategy: Equatable {
     /// QDC507: the module's internal bridge is repaired over ADB, and the
     /// module is restarted with AT+CFUN=1,1 once that ladder is exhausted.
     case moduleBridge
-    /// RM520N-GL: nothing inside the module is reachable, so the Mac-side ECM
-    /// interface is reset first (the network helper takes it down and up
-    /// again) and the module is restarted as the last resort.
-    case hostInterface
+    /// RM520N-GL: nothing inside the module is reachable and resetting the
+    /// Mac-side interface does not revive its carrier (measured after a system
+    /// sleep), so the network configuration is re-applied once, in case only
+    /// DHCP is missing, and then the module is restarted.
+    case moduleRestart
 }
 
 enum CellularLinkRecoveryPolicy {
     static let maximumAttempts = 3
 
-    /// Resetting the Mac-side interface either brings the carrier back within
-    /// seconds or not at all, so one retry is enough before the restart.
-    static let hostInterfaceMaximumAttempts = 2
+    /// The one soft step of the restart strategy cannot repair a dead carrier,
+    /// so repeating it would only postpone the restart.
+    static let moduleRestartMaximumAttempts = 1
 
     /// USB identities whose link CellDock repairs automatically. The QDC507
     /// ladder (bridge repair over ADB, then AT+CFUN=1,1) is verified on that
@@ -28,7 +29,7 @@ enum CellularLinkRecoveryPolicy {
     static func repairStrategy(for modem: ModemSnapshot) -> CellularLinkRepairStrategy? {
         switch modem.usbIdentity?.uppercased() {
         case "2C7C:0125": return .moduleBridge
-        case "2C7C:0801": return .hostInterface
+        case "2C7C:0801": return .moduleRestart
         default: return nil
         }
     }
@@ -48,7 +49,7 @@ enum CellularLinkRecoveryPolicy {
     static func maximumAttempts(for strategy: CellularLinkRepairStrategy) -> Int {
         switch strategy {
         case .moduleBridge: return maximumAttempts
-        case .hostInterface: return hostInterfaceMaximumAttempts
+        case .moduleRestart: return moduleRestartMaximumAttempts
         }
     }
 
@@ -170,13 +171,30 @@ enum CellularLinkRecoveryPolicy {
         return now.timeIntervalSince(lastRestart) >= restartCooldown
     }
 
-    /// What survives a system wake. Sleep suspends USB and commonly leaves the
-    /// ECM carrier down, so every wake is a fresh outage that deserves the
-    /// full soft-recovery budget. The restart guard still honours its
-    /// cooldown: a Mac that naps and wakes every few minutes must not power
-    /// cycle the module each time.
-    static func restartGuardSurvivesWake(lastRestart: Date?, now: Date) -> Bool {
-        !canClearRestartGuard(lastRestart: lastRestart, now: now)
+    /// USB is resumed a moment after the system reports the wake, and a link
+    /// that is coming back by itself needs a few seconds to show its carrier.
+    /// Recovery waits this long so a healthy module is not restarted for
+    /// being slow.
+    static let wakeSettleInterval: TimeInterval = 15
+
+    static func hasSettledAfterWake(lastWake: Date?, now: Date) -> Bool {
+        guard let lastWake else { return true }
+        return now.timeIntervalSince(lastWake) >= wakeSettleInterval
+    }
+
+    /// Whether the once-only restart guard may be lifted outside the moment a
+    /// healthy status happens to be published, for example after a wake.
+    ///
+    /// The cooldown alone is not enough. A module whose link never came back
+    /// after its restart was not helped by it: a SIM without a data plan or
+    /// without coverage would otherwise be restarted again after every wake,
+    /// and each restart takes calls and SMS offline for about a minute.
+    static func canLiftRestartGuard(
+        lastRestart: Date?,
+        now: Date,
+        linkRecoveredSinceRestart: Bool
+    ) -> Bool {
+        linkRecoveredSinceRestart && canClearRestartGuard(lastRestart: lastRestart, now: now)
     }
 
     static func delayNanoseconds(completedAttempts: Int) -> UInt64 {

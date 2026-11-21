@@ -108,8 +108,12 @@ final class AppState: ObservableObject {
     private var lastScheduledNetworkConfigurationSignature: String?
     private var didRestartModuleForCellularRecovery: Set<CellularModuleID> = []
     private var lastCellularModuleRestartAt: [CellularModuleID: Date] = [:]
+    /// Modules whose link carried traffic again after their recovery restart.
+    private var linkRecoveredAfterRestart: Set<CellularModuleID> = []
     /// True between the system's will-sleep and did-wake notifications.
     private var isSystemAsleep = false
+    private var lastSystemWakeAt: Date?
+    private var wakeSettleTask: Task<Void, Never>?
     private var systemPowerObservers: [NSObjectProtocol] = []
     private var moduleIdentityCache = ModuleIdentityCache()
     private var pendingNetworkModuleRestart: NetworkModuleRestartContext?
@@ -690,6 +694,9 @@ final class AppState: ObservableObject {
             // straight to a restart.
             for (moduleID, status) in mapped where status.isActive {
                 self.completedCellularLinkRecoveryAttempts[moduleID] = nil
+                if self.didRestartModuleForCellularRecovery.contains(moduleID) {
+                    self.linkRecoveredAfterRestart.insert(moduleID)
+                }
                 // Soft recovery is cheap, so its budget resets immediately, but
                 // the restart guard only lifts once the module has stayed
                 // healthy past the cooldown. Otherwise a module that merely
@@ -700,6 +707,7 @@ final class AppState: ObservableObject {
                 ) {
                     self.didRestartModuleForCellularRecovery.remove(moduleID)
                     self.lastCellularModuleRestartAt[moduleID] = nil
+                    self.linkRecoveredAfterRestart.remove(moduleID)
                 }
             }
             if let selectedID = self.primaryDataModuleID,
@@ -746,32 +754,61 @@ final class AppState: ObservableObject {
     private func systemWillSleep() {
         cellularNetworkLogger.notice("System will sleep; pausing cellular link recovery")
         isSystemAsleep = true
+        wakeSettleTask?.cancel()
+        wakeSettleTask = nil
         // A repair that is cut off by the sleep would only waste its attempt.
         cancelCellularLinkRecovery(resetAttempts: false)
+    }
+
+    /// The restart guard is normally lifted when a healthy status is published
+    /// after the cooldown. A link that stays up publishes nothing, so the
+    /// guard is also re-evaluated before it is consulted. It is only lifted
+    /// for a module the restart actually helped.
+    private func liftRestartGuardIfEarned(for moduleID: CellularModuleID, now: Date = Date()) {
+        guard didRestartModuleForCellularRecovery.contains(moduleID),
+              CellularLinkRecoveryPolicy.canLiftRestartGuard(
+                  lastRestart: lastCellularModuleRestartAt[moduleID],
+                  now: now,
+                  linkRecoveredSinceRestart: linkRecoveredAfterRestart.contains(moduleID)
+              ) else {
+            return
+        }
+        didRestartModuleForCellularRecovery.remove(moduleID)
+        lastCellularModuleRestartAt[moduleID] = nil
+        linkRecoveredAfterRestart.remove(moduleID)
     }
 
     private func systemDidWake() {
         cellularNetworkLogger.notice("System did wake; re-checking cellular links")
         isSystemAsleep = false
+        lastSystemWakeAt = Date()
         // Every wake is a new outage: give it the whole soft-recovery budget.
         // The restart guard is only lifted once its cooldown has passed, so a
         // Mac that wakes every few minutes cannot power cycle the module each
         // time.
         completedCellularLinkRecoveryAttempts.removeAll()
-        let now = Date()
-        for moduleID in didRestartModuleForCellularRecovery
-        where !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
-            lastRestart: lastCellularModuleRestartAt[moduleID],
-            now: now
-        ) {
-            didRestartModuleForCellularRecovery.remove(moduleID)
-            lastCellularModuleRestartAt[moduleID] = nil
+        for moduleID in didRestartModuleForCellularRecovery {
+            liftRestartGuardIfEarned(for: moduleID)
         }
         modemInventoryService.refresh()
         modemService.refresh()
         for service in secondaryModemServices.values { service.refresh() }
         networkController.refresh()
-        scheduleCellularLinkRecoveryIfNeeded()
+        // Look again once the links have had time to come back by themselves;
+        // nothing else is guaranteed to publish a change at that moment.
+        wakeSettleTask?.cancel()
+        wakeSettleTask = Task { [weak self] in
+            let settle = CellularLinkRecoveryPolicy.wakeSettleInterval + 0.5
+            do {
+                try await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000))
+            } catch {
+                return
+            }
+            guard let self, !self.isSystemAsleep else { return }
+            self.wakeSettleTask = nil
+            self.networkController.refresh()
+            self.scheduleCellularLinkRecoveryIfNeeded()
+        }
     }
 
     func refresh() {
@@ -1728,7 +1765,12 @@ final class AppState: ObservableObject {
     /// wins when several qualify, because it carries the default route.
     private func cellularLinkRecoveryCandidate() -> CellularModuleID? {
         // A dark wake is still sleep as far as the user is concerned.
-        let recoveryIsPaused = isSystemAsleep || !SystemPowerState.isFullyAwake()
+        let recoveryIsPaused = isSystemAsleep ||
+            !CellularLinkRecoveryPolicy.hasSettledAfterWake(
+                lastWake: lastSystemWakeAt,
+                now: Date()
+            ) ||
+            !SystemPowerState.isFullyAwake()
         let candidates = cellularModules.map(\.id).filter { moduleID in
             CellularLinkRecoveryPolicy.shouldAttempt(
                 network: networkStatus(for: moduleID),
@@ -1815,14 +1857,14 @@ final class AppState: ObservableObject {
                     self.finishCellularLinkRecoveryAttempt(moduleID: moduleID, error: message)
                 }
             }
-        case .hostInterface:
+        case .moduleRestart:
             // Nothing inside this module can be repaired. Re-applying the
-            // configuration makes the network helper reset the Mac-side
-            // interface, which is the whole soft step for this strategy.
+            // configuration covers the case where the carrier is up and only
+            // DHCP is missing; a dead carrier falls through to the restart.
             reapplyConfigurationForLinkRecovery(
                 generation: generation,
                 moduleID: moduleID,
-                strategy: .hostInterface
+                strategy: .moduleRestart
             )
         case nil:
             finishRecoveryOperation()
@@ -1864,7 +1906,7 @@ final class AppState: ObservableObject {
                     error = reason == .linkInactive
                         ? L10n.tr("模块内部链路已就绪，但 ECM 载波尚未恢复：%@", message)
                         : L10n.tr("模块链路已恢复，但 macOS DHCP 刷新失败：%@", message)
-                case .hostInterface:
+                case .moduleRestart:
                     error = message
                 }
                 self.finishCellularLinkRecoveryAttempt(moduleID: moduleID, error: error)
@@ -1930,6 +1972,7 @@ final class AppState: ObservableObject {
 
         let isDHCPTimeout = reason == .dhcpTimeout
 
+        liftRestartGuardIfEarned(for: targetModuleID)
         if didRestartModuleForCellularRecovery.contains(targetModuleID) {
             presentTransientMessage(
                 isDHCPTimeout
@@ -1974,6 +2017,7 @@ final class AppState: ObservableObject {
         error: String? = nil
     ) {
         let attempts = completedCellularLinkRecoveryAttempts[moduleID] ?? 0
+        liftRestartGuardIfEarned(for: moduleID)
         if attempts >= CellularLinkRecoveryPolicy.maximumAttempts(
             for: moduleSnapshot(for: moduleID)
         ) {
@@ -2026,6 +2070,7 @@ final class AppState: ObservableObject {
 
         didRestartModuleForCellularRecovery.insert(targetModuleID)
         lastCellularModuleRestartAt[targetModuleID] = Date()
+        linkRecoveredAfterRestart.remove(targetModuleID)
         recoveringNetworkLinkModuleID = targetModuleID
         cellularNetworkLogger.notice("\(logMessage, privacy: .public)")
         targetService.restartForCellularNetworkRecovery { [weak self] result in

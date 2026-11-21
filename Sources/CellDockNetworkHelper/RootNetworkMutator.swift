@@ -461,29 +461,9 @@ final class RootNetworkMutator {
         // then restore the administrative UP flag once and wait through the
         // bridge forwarding window before deciding that recovery is required.
         if !waitForLinkActive(on: bsdName, timeout: 2.0) {
-            // Bringing an interface "up" that is already administratively up
-            // changes nothing. Where the policy allows it, take the interface
-            // down first so the driver selects the ECM data interface again,
-            // which is what makes the module announce its carrier.
-            let resetsInterface = CellDockModemNetworkIdentity.resetsHostInterfaceWhenLinkIsDown(
-                vendorID: identity.vendorID,
-                productID: identity.productID
+            rootNetworkLogger.notice(
+                "ECM link is inactive after service enable; forcing interface up interface=\(bsdName, privacy: .public)"
             )
-            if resetsInterface {
-                rootNetworkLogger.notice(
-                    "ECM link is inactive after service enable; resetting interface interface=\(bsdName, privacy: .public)"
-                )
-                if let downError = runIFConfig("down", on: bsdName) {
-                    rootNetworkLogger.error(
-                        "Unable to take ECM interface down interface=\(bsdName, privacy: .public) error=\(downError, privacy: .public)"
-                    )
-                }
-                Thread.sleep(forTimeInterval: 1.0)
-            } else {
-                rootNetworkLogger.notice(
-                    "ECM link is inactive after service enable; forcing interface up interface=\(bsdName, privacy: .public)"
-                )
-            }
             let interfaceUpError = runIFConfig("up", on: bsdName)
             if let interfaceUpError {
                 rootNetworkLogger.error(

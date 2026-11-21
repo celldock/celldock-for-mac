@@ -4402,14 +4402,14 @@ do {
     // MARK: Module link recovery strategies
 
     // The RM520N-GL has no ADB bridge to repair, but it is no longer left
-    // without any recovery: the Mac-side interface is reset, then the module
-    // is restarted. A module nobody verified still gets nothing.
+    // without any recovery: the configuration is re-applied once and then the
+    // module is restarted. A module nobody verified still gets nothing.
     let recoveryQDC = ModemSnapshot(state: .connected, usbIdentity: "2c7c:0125", usbNetMode: 1)
     let recoveryRM520 = ModemSnapshot(state: .connected, usbIdentity: "2C7C:0801", usbNetMode: 1)
     let recoveryUnknown = ModemSnapshot(state: .connected, usbIdentity: "2C7C:0802", usbNetMode: 1)
     try expect(
         CellularLinkRecoveryPolicy.repairStrategy(for: recoveryQDC) == .moduleBridge &&
-            CellularLinkRecoveryPolicy.repairStrategy(for: recoveryRM520) == .hostInterface &&
+            CellularLinkRecoveryPolicy.repairStrategy(for: recoveryRM520) == .moduleRestart &&
             CellularLinkRecoveryPolicy.repairStrategy(for: recoveryUnknown) == nil &&
             CellularLinkRecoveryPolicy.repairStrategy(for: ModemSnapshot()) == nil,
         "link repair strategy did not follow the USB identity"
@@ -4468,9 +4468,9 @@ do {
                 hasCall: false,
                 isChangingNetwork: false,
                 isInFlight: false,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts
             ),
-        "link recovery ran while the Mac was asleep or beyond the host-interface budget"
+        "link recovery ran while the Mac was asleep or beyond the restart strategy's budget"
     )
     try expect(
         CellularLinkRecoveryPolicy.shouldRestartModule(
@@ -4478,7 +4478,7 @@ do {
             modem: recoveryRM520,
             desiredMode: .standby,
             hasCall: false,
-            completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+            completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
             alreadyRestarted: false
         ) &&
             !CellularLinkRecoveryPolicy.shouldRestartModule(
@@ -4486,7 +4486,7 @@ do {
                 modem: recoveryRM520,
                 desiredMode: .standby,
                 hasCall: false,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts - 1,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts - 1,
                 alreadyRestarted: false
             ) &&
             !CellularLinkRecoveryPolicy.shouldRestartModule(
@@ -4494,7 +4494,7 @@ do {
                 modem: recoveryRM520,
                 desiredMode: .standby,
                 hasCall: true,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
                 alreadyRestarted: false
             ) &&
             !CellularLinkRecoveryPolicy.shouldRestartModule(
@@ -4502,7 +4502,7 @@ do {
                 modem: recoveryRM520,
                 desiredMode: .standby,
                 hasCall: false,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
                 alreadyRestarted: true
             ),
         "the RM520N-GL restart fallback ignored its budget, an active call, or the once-only guard"
@@ -4510,12 +4510,12 @@ do {
     try expect(
         CellularLinkRecoveryPolicy.shouldEscalateToRestart(
             reason: .linkInactive,
-            completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+            completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
             maximumAttempts: CellularLinkRecoveryPolicy.maximumAttempts(for: recoveryRM520)
         ) &&
             !CellularLinkRecoveryPolicy.shouldEscalateToRestart(
                 reason: .linkInactive,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
                 maximumAttempts: CellularLinkRecoveryPolicy.maximumAttempts(for: recoveryQDC)
             ),
         "restart escalation did not use each module's own attempt budget"
@@ -4529,12 +4529,12 @@ do {
         ) &&
             CellularLinkRecoveryPolicy.isRetrying(
                 modem: recoveryRM520,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
                 hasRestarted: false
             ) &&
             !CellularLinkRecoveryPolicy.isRetrying(
                 modem: recoveryRM520,
-                completedAttempts: CellularLinkRecoveryPolicy.hostInterfaceMaximumAttempts,
+                completedAttempts: CellularLinkRecoveryPolicy.moduleRestartMaximumAttempts,
                 hasRestarted: true
             ) &&
             !CellularLinkRecoveryPolicy.isRetrying(
@@ -4544,20 +4544,44 @@ do {
             ),
         "retry reporting claimed a retry for a module without any recovery"
     )
+    // A module that was restarted for recovery may only be restarted again
+    // once the cooldown has passed and the restart is known to have helped.
+    // A SIM without data service never gets its link back, and restarting it
+    // after every wake would take calls and SMS offline each time.
     let wakeMoment = Date(timeIntervalSince1970: 1_800_000_000)
+    let longAgo = wakeMoment.addingTimeInterval(-CellularLinkRecoveryPolicy.restartCooldown)
     try expect(
-        !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(lastRestart: nil, now: wakeMoment) &&
-            CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
+        CellularLinkRecoveryPolicy.canLiftRestartGuard(
+            lastRestart: longAgo,
+            now: wakeMoment,
+            linkRecoveredSinceRestart: true
+        ) &&
+            !CellularLinkRecoveryPolicy.canLiftRestartGuard(
+                lastRestart: longAgo,
+                now: wakeMoment,
+                linkRecoveredSinceRestart: false
+            ) &&
+            !CellularLinkRecoveryPolicy.canLiftRestartGuard(
                 lastRestart: wakeMoment.addingTimeInterval(-60),
+                now: wakeMoment,
+                linkRecoveredSinceRestart: true
+            ),
+        "the restart guard was lifted inside its cooldown or for a module the restart never helped"
+    )
+
+    try expect(
+        CellularLinkRecoveryPolicy.hasSettledAfterWake(lastWake: nil, now: wakeMoment) &&
+            !CellularLinkRecoveryPolicy.hasSettledAfterWake(
+                lastWake: wakeMoment.addingTimeInterval(-5),
                 now: wakeMoment
             ) &&
-            !CellularLinkRecoveryPolicy.restartGuardSurvivesWake(
-                lastRestart: wakeMoment.addingTimeInterval(
-                    -CellularLinkRecoveryPolicy.restartCooldown
+            CellularLinkRecoveryPolicy.hasSettledAfterWake(
+                lastWake: wakeMoment.addingTimeInterval(
+                    -CellularLinkRecoveryPolicy.wakeSettleInterval
                 ),
                 now: wakeMoment
             ),
-        "a wake re-armed the module restart inside its cooldown, or kept it blocked after it"
+        "link recovery did not wait for the links to settle after a wake"
     )
 
     // Recovery waits for a full wake: 15 is fully awake, 9 and 1 are the
@@ -4572,25 +4596,18 @@ do {
         "full wake detection was wrong, or this running Mac was reported as not awake"
     )
 
-    // The helper only resets the Mac-side interface for the RM520N-GL.
+    // The QDC507 keeps its long carrier wait; the RM520N-GL fails fast so the
+    // restart is not delayed by a wait that cannot succeed.
     try expect(
-        CellDockModemNetworkIdentity.resetsHostInterfaceWhenLinkIsDown(
+        CellDockModemNetworkIdentity.linkActivationTimeout(
             vendorID: 0x2C7C,
-            productID: 0x0801
-        ) &&
-            !CellDockModemNetworkIdentity.resetsHostInterfaceWhenLinkIsDown(
-                vendorID: 0x2C7C,
-                productID: 0x0125
-            ) &&
-            CellDockModemNetworkIdentity.linkActivationTimeout(
-                vendorID: 0x2C7C,
-                productID: 0x0125
-            ) == 28 &&
+            productID: 0x0125
+        ) == 28 &&
             CellDockModemNetworkIdentity.linkActivationTimeout(
                 vendorID: 0x2C7C,
                 productID: 0x0801
-            ) < 28,
-        "host interface reset was not limited to the RM520N-GL, or the QDC507 wait changed"
+            ) == 10,
+        "the helper's carrier wait changed for the QDC507 or is too long for the RM520N-GL"
     )
     try expect(
         CellDockModemNetworkIdentity.serviceName(
