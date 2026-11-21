@@ -58,6 +58,7 @@ final class NetworkServiceController {
 
     func applyConfiguration(
         _ request: CellularNetworkConfigurationRequest,
+        installKind: NetworkHelperInstallRequestKind,
         completion: @escaping (CellularNetworkActionResult) -> Void
     ) {
         queue.async { [weak self] in
@@ -74,7 +75,10 @@ final class NetworkServiceController {
                 }
                 return
             }
-            self.helperClient.applyCellularNetworkConfiguration(request) { [weak self] result in
+            self.helperClient.applyCellularNetworkConfiguration(
+                request,
+                installKind: installKind
+            ) { [weak self] result in
                 guard let self else { return }
                 self.queue.async {
                     self.refreshNow()

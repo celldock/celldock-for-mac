@@ -3770,6 +3770,99 @@ do {
         // Expected.
     }
 
+    // Issue #15: the network helper install prompt must not repeat.
+    var installPolicy = NetworkHelperInstallPolicy(
+        helperBuildVersion: 15,
+        declinedHelperBuildVersion: nil
+    )
+    try expect(
+        installPolicy.decision(for: .automatic) == .prompt &&
+            installPolicy.decision(for: .userInitiated) == .prompt,
+        "first helper request did not prompt"
+    )
+    try expect(
+        installPolicy.decision(for: .passive) == .suppressed(.passiveRequest),
+        "a passive helper request may prompt"
+    )
+    installPolicy.record(.cancelled, for: .automatic)
+    try expect(
+        installPolicy.decision(for: .automatic) == .suppressed(.declined),
+        "automatic request prompted again after a cancel"
+    )
+    try expect(
+        installPolicy.decision(for: .userInitiated) == .prompt,
+        "user-initiated request could not retry after a cancel"
+    )
+    try expect(
+        installPolicy.isDeclined && installPolicy.declinedHelperBuildVersion == 15,
+        "cancel was not recorded as a decline of this helper build"
+    )
+    try expect(
+        installPolicy.decision(for: .passive) == .suppressed(.passiveRequest),
+        "a passive helper request may prompt after a cancel"
+    )
+
+    var failedPolicy = NetworkHelperInstallPolicy(helperBuildVersion: 15, declinedHelperBuildVersion: nil)
+    failedPolicy.record(.failed("boom"), for: .automatic)
+    try expect(
+        failedPolicy.decision(for: .automatic) == .suppressed(.failed("boom")),
+        "automatic request prompted again after a failed install"
+    )
+    try expect(
+        failedPolicy.decision(for: .userInitiated) == .prompt,
+        "user-initiated request could not retry after a failed install"
+    )
+    try expect(!failedPolicy.isDeclined, "a failed install was treated as a decline")
+
+    var unusablePolicy = NetworkHelperInstallPolicy(helperBuildVersion: 15, declinedHelperBuildVersion: nil)
+    unusablePolicy.record(.installedButUnusable("rejected"), for: .userInitiated)
+    try expect(
+        unusablePolicy.decision(for: .automatic) == .suppressed(.installedButUnusable("rejected")) &&
+            unusablePolicy.decision(for: .userInitiated) == .suppressed(.installedButUnusable("rejected")) &&
+            unusablePolicy.decision(for: .passive) == .suppressed(.passiveRequest),
+        "someone was prompted again after an installed-but-unusable helper"
+    )
+
+    var readyPolicy = NetworkHelperInstallPolicy(helperBuildVersion: 15, declinedHelperBuildVersion: nil)
+    readyPolicy.record(.installedAndReady, for: .automatic)
+    try expect(
+        readyPolicy.decision(for: .automatic) == .suppressed(.alreadyAttempted) &&
+            readyPolicy.decision(for: .userInitiated) == .prompt,
+        "a second automatic install was allowed in the same session"
+    )
+
+    // A persisted decline survives a fresh policy (a new launch)...
+    var relaunchedPolicy = NetworkHelperInstallPolicy(
+        helperBuildVersion: 15,
+        declinedHelperBuildVersion: installPolicy.declinedHelperBuildVersion
+    )
+    try expect(
+        relaunchedPolicy.decision(for: .automatic) == .suppressed(.declined) &&
+            relaunchedPolicy.decision(for: .userInitiated) == .prompt,
+        "a persisted decline did not suppress automatic prompts after relaunch"
+    )
+    // ...an automatic success does not clear it, a user-initiated one does.
+    var automaticSuccess = relaunchedPolicy
+    automaticSuccess.record(.installedAndReady, for: .automatic)
+    try expect(automaticSuccess.isDeclined, "an automatic install cleared the user's decline")
+    relaunchedPolicy.record(.installedAndReady, for: .userInitiated)
+    try expect(
+        relaunchedPolicy.declinedHelperBuildVersion == nil && !relaunchedPolicy.isDeclined,
+        "a successful user-initiated install did not clear the decline"
+    )
+    let afterClear = NetworkHelperInstallPolicy(
+        helperBuildVersion: 15,
+        declinedHelperBuildVersion: relaunchedPolicy.declinedHelperBuildVersion
+    )
+    try expect(afterClear.decision(for: .automatic) == .prompt, "a cleared decline still suppressed prompts")
+
+    // A decline of an older helper build does not block a newer helper.
+    let upgradedPolicy = NetworkHelperInstallPolicy(helperBuildVersion: 16, declinedHelperBuildVersion: 15)
+    try expect(
+        !upgradedPolicy.isDeclined && upgradedPolicy.decision(for: .automatic) == .prompt,
+        "a decline for an older helper build suppressed the new helper"
+    )
+
     print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5, VoWiFi, buffering, storage, merge).")
 } catch {
     fputs("Self-test failed: \(error)\n", stderr)

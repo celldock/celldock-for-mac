@@ -2,146 +2,100 @@ import Foundation
 import CellDockNetworkIPC
 
 final class NetworkHelperClient {
-    private enum PingResult {
-        case ready
-        case unavailable(String)
-        case incompatible(Int)
-        case outdated
-    }
-
     private let queue = DispatchQueue(label: "app.celldock.mac.network.helper.client")
-    private let installer = NetworkHelperInstaller()
+    private let installGate: NetworkHelperInstallGate
+
+    init(installGate: NetworkHelperInstallGate = .shared) {
+        self.installGate = installGate
+    }
 
     func startVoWiFiHost(
         _ request: VoWiFiHostStartRequest,
+        installKind: NetworkHelperInstallRequestKind,
         completion: @escaping (Result<Data?, Error>) -> Void
     ) {
-        queue.async { [weak self] in
-            self?.ensureReady { result in
-                switch result {
-                case .success:
-                    self?.invokeVoWiFiStart(request, completion: completion)
-                case let .failure(error):
-                    completion(.failure(error))
-                }
+        ensureHelper(kind: installKind) { [weak self] result in
+            switch result {
+            case .success:
+                self?.invokeVoWiFiStart(request, completion: completion)
+            case let .failure(failure):
+                completion(.failure(VoWiFiHostClientError.helperUnavailable(failure.message)))
             }
         }
     }
 
+    /// Passive: never installs the helper. Without a helper there is no
+    /// runtime to stop, so that counts as stopped.
     func stopVoWiFiHost(
         runtimeKey: String,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        queue.async { [weak self] in
-            self?.ensureReady { result in
-                switch result {
-                case .success:
-                    self?.invokeVoWiFiStop(runtimeKey: runtimeKey, completion: completion)
-                case let .failure(error):
-                    completion(.failure(error))
-                }
+        ensureHelper(kind: .passive) { [weak self] result in
+            switch result {
+            case .success:
+                self?.invokeVoWiFiStop(runtimeKey: runtimeKey, completion: completion)
+            case .failure(.notReady):
+                completion(.success(()))
+            case let .failure(failure):
+                completion(.failure(VoWiFiHostClientError.helperUnavailable(failure.message)))
             }
         }
     }
 
+    /// Passive: never installs the helper.
     func queryVoWiFiHost(
         runtimeKey: String,
         completion: @escaping (Result<Data?, Error>) -> Void
     ) {
-        queue.async { [weak self] in
-            self?.ensureReady { result in
-                switch result {
-                case .success:
-                    self?.invokeVoWiFiQuery(runtimeKey: runtimeKey, completion: completion)
-                case let .failure(error):
-                    completion(.failure(error))
-                }
+        ensureHelper(kind: .passive) { [weak self] result in
+            switch result {
+            case .success:
+                self?.invokeVoWiFiQuery(runtimeKey: runtimeKey, completion: completion)
+            case let .failure(failure):
+                completion(.failure(VoWiFiHostClientError.helperUnavailable(failure.message)))
             }
         }
     }
 
     func applyCellularNetworkConfiguration(
         _ request: CellularNetworkConfigurationRequest,
+        installKind: NetworkHelperInstallRequestKind,
         completion: @escaping (CellularNetworkActionResult) -> Void
     ) {
-        queue.async { [weak self] in
-            self?.ensureHelperThenApply(
-                request,
-                completion: completion
-            )
-        }
-    }
-
-    private func ensureHelperThenApply(
-        _ request: CellularNetworkConfigurationRequest,
-        completion: @escaping (CellularNetworkActionResult) -> Void
-    ) {
-        ping { [weak self] result in
-            guard let self else { return }
+        ensureHelper(kind: installKind) { [weak self] result in
             switch result {
-            case .ready:
-                self.invokeApply(request, completion: completion)
-            case .unavailable, .incompatible, .outdated:
-                switch self.installer.install() {
-                case .success:
-                    self.waitForInstalledHelper(
-                        request: request,
-                        attemptsRemaining: 12,
-                        completion: completion
-                    )
-                case let .failure(error):
-                    completion(.failure(error.localizedDescription, reason: .other))
-                }
+            case .success:
+                self?.invokeApply(request, completion: completion)
+            case let .failure(failure):
+                completion(.failure(failure.message, reason: .other))
             }
         }
     }
 
-    private func waitForInstalledHelper(
-        request: CellularNetworkConfigurationRequest,
-        attemptsRemaining: Int,
-        completion: @escaping (CellularNetworkActionResult) -> Void
+    /// Runs the shared ping-install-wait sequence and delivers the result on
+    /// this client's queue.
+    private func ensureHelper(
+        kind: NetworkHelperInstallRequestKind,
+        completion: @escaping (Result<Void, NetworkHelperGateFailure>) -> Void
     ) {
-        ping { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .ready:
-                self.invokeApply(request, completion: completion)
-            case let .incompatible(version):
-                completion(.failure(
-                    L10n.tr(
-                        "已安装的网络 helper 协议版本为 %lld，但 CellDock 需要 %lld。请重新安装最新版。",
-                        Int64(version),
-                        Int64(CellDockNetworkIPC.protocolVersion)
-                    ),
-                    reason: .other
-                ))
-            case .outdated:
-                completion(.failure(
-                    L10n.tr("网络 helper 已安装，但版本仍不是当前版本。请重新安装最新版。"),
-                    reason: .other
-                ))
-            case let .unavailable(message):
-                guard attemptsRemaining > 1 else {
-                    completion(.failure(
-                        L10n.tr("网络 helper 已安装，但未能启动：%@", message),
-                        reason: .other
-                    ))
+        installGate.ensureHelper(
+            kind: kind,
+            ping: { [weak self] reply in
+                guard let self else {
+                    reply(.unavailable(L10n.tr("CellDock 已停止。")))
                     return
                 }
-                self.queue.asyncAfter(deadline: .now() + .milliseconds(250)) {
-                    self.waitForInstalledHelper(
-                        request: request,
-                        attemptsRemaining: attemptsRemaining - 1,
-                        completion: completion
-                    )
-                }
+                self.ping(completion: reply)
+            },
+            completion: { [queue] result in
+                queue.async { completion(result) }
             }
-        }
+        )
     }
 
-    private func ping(completion: @escaping (PingResult) -> Void) {
+    private func ping(completion: @escaping (NetworkHelperPingState) -> Void) {
         let connection = makeConnection()
-        let gate = OneShot<PingResult> { [queue] result in
+        let gate = OneShot<NetworkHelperPingState> { [queue] result in
             connection.invalidate()
             queue.async { completion(result) }
         }
@@ -220,51 +174,6 @@ final class NetworkHelperClient {
         )
         connection.remoteObjectInterface = NSXPCInterface(with: CellDockNetworkHelperProtocol.self)
         return connection
-    }
-
-    private func ensureReady(completion: @escaping (Result<Void, Error>) -> Void) {
-        ping { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .ready:
-                completion(.success(()))
-            case .unavailable, .incompatible, .outdated:
-                switch self.installer.install() {
-                case .success:
-                    self.waitUntilReady(attemptsRemaining: 12, completion: completion)
-                case let .failure(error):
-                    completion(.failure(error))
-                }
-            }
-        }
-    }
-
-    private func waitUntilReady(
-        attemptsRemaining: Int,
-        completion: @escaping (Result<Void, Error>) -> Void
-    ) {
-        ping { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .ready:
-                completion(.success(()))
-            case let .unavailable(message):
-                guard attemptsRemaining > 1 else {
-                    completion(.failure(VoWiFiHostClientError.helperUnavailable(message)))
-                    return
-                }
-                self.queue.asyncAfter(deadline: .now() + .milliseconds(250)) {
-                    self.waitUntilReady(
-                        attemptsRemaining: attemptsRemaining - 1,
-                        completion: completion
-                    )
-                }
-            case .incompatible, .outdated:
-                completion(.failure(VoWiFiHostClientError.helperUnavailable(
-                    L10n.tr("网络 helper 版本不兼容。")
-                )))
-            }
-        }
     }
 
     private func invokeVoWiFiStart(
