@@ -42,7 +42,9 @@ final class NetworkHelperClient {
         }
     }
 
-    /// Passive: never installs the helper.
+    /// Passive: never installs the helper. A missing or unusable helper is
+    /// reported as `NetworkHelperNotReadyError`, so the caller can tell it
+    /// apart from a runtime failure.
     func queryVoWiFiHost(
         runtimeKey: String,
         completion: @escaping (Result<Data?, Error>) -> Void
@@ -51,6 +53,8 @@ final class NetworkHelperClient {
             switch result {
             case .success:
                 self?.invokeVoWiFiQuery(runtimeKey: runtimeKey, completion: completion)
+            case let .failure(.notReady(message)):
+                completion(.failure(NetworkHelperNotReadyError(message: message)))
             case let .failure(failure):
                 completion(.failure(VoWiFiHostClientError.helperUnavailable(failure.message)))
             }
@@ -270,6 +274,14 @@ final class NetworkHelperClient {
             }
         }
     }
+}
+
+/// A status query found no usable network helper and, being passive, did not
+/// offer to install one.
+struct NetworkHelperNotReadyError: LocalizedError {
+    let message: String
+
+    var errorDescription: String? { message }
 }
 
 private enum VoWiFiHostClientError: LocalizedError {

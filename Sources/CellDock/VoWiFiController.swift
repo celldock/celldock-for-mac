@@ -291,6 +291,14 @@ final class VoWiFiController: ObservableObject {
                 switch result {
                 case let .success(data):
                     self.evaluate(VoWiFiRuntimeStatus.parse(jsonData: data), for: moduleID)
+                case let .failure(error as NetworkHelperNotReadyError):
+                    self.finish(
+                        .whenHelperNotReady(
+                            runningRequested: self.desiredRunning.contains(moduleID),
+                            message: error.message
+                        ),
+                        for: moduleID
+                    )
                 case let .failure(error):
                     self.finish(.failed(error.localizedDescription), for: moduleID)
                 }

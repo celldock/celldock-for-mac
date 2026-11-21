@@ -3863,6 +3863,19 @@ do {
         "a decline for an older helper build suppressed the new helper"
     )
 
+    // A status query that finds no helper must not show a session nobody
+    // started as a runtime failure, and must not report a session that should
+    // be running as stopped.
+    try expect(
+        VoWiFiSessionState.whenHelperNotReady(runningRequested: false, message: "no helper") == .stopped,
+        "a missing helper was shown as a VoWiFi runtime failure"
+    )
+    try expect(
+        VoWiFiSessionState.whenHelperNotReady(runningRequested: true, message: "no helper") ==
+            .failed("no helper"),
+        "a missing helper reported a requested VoWiFi session as stopped"
+    )
+
     print("CellDock self-tests passed (calls, PDU/UDH, SOCKS5, VoWiFi, buffering, storage, merge).")
 } catch {
     fputs("Self-test failed: \(error)\n", stderr)
