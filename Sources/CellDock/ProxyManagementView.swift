@@ -396,9 +396,11 @@ private struct ProxyEditorView: View {
                     }
                 }
                 Spacer(minLength: 16)
+                // Native switch: on macOS 26+ it renders with the system's
+                // Liquid Glass appearance, and as a regular switch before that.
                 Toggle(L10n.tr("启用"), isOn: enabledBinding)
-                    .toggleStyle(.adaptiveGlass)
-                    .controlSize(.small)
+                    .toggleStyle(.switch)
+                    .controlSize(.regular)
                     .fixedSize()
                     .padding(.top, 6)
             }
