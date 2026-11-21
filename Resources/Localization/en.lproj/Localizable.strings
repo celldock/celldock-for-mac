@@ -1718,3 +1718,4 @@
 "已切换到卡槽 %lld，SIM 卡仍在读取。" = "Switched to slot %lld. The SIM card is still being read.";
 "正在修复蜂窝网络连接，请稍后再切换卡槽。" = "The cellular connection is being repaired. Try switching slots again later.";
 "正在切换 SIM 卡槽，请稍后再发送短信。" = "The SIM slot is being switched. Send the message again in a moment.";
+"正在切换 SIM 卡槽，请稍后再拨号。" = "The SIM slot is being switched. Try calling again in a moment.";

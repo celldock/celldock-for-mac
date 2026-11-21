@@ -1566,7 +1566,7 @@ struct SIMManagementView: View {
             if isSwitchTarget {
                 ProgressView()
                     .controlSize(.small)
-            } else if !isActive {
+            } else if !isActive, !isGoingOffline {
                 Button(L10n.tr("切换到卡槽 %lld", Int64(slot))) {
                     pendingSIMSlot = slot
                 }

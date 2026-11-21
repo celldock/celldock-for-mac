@@ -2260,6 +2260,10 @@ final class AppState: ObservableObject {
             presentTransientMessage(L10n.tr("已有一路通话，结束后才能使用另一张卡拨号。"), isError: true)
             return
         }
+        guard !isSwitchingSIMSlot(on: moduleID) else {
+            presentTransientMessage(L10n.tr("正在切换 SIM 卡槽，请稍后再拨号。"), isError: true)
+            return
+        }
         guard !isChangingCall else { return }
         isChangingCall = true
         dismissTransientMessage()

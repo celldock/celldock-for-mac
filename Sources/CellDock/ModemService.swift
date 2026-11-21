@@ -114,6 +114,14 @@ final class ModemService {
     private var didQuerySIMIdentity = false
     private var nextSIMRefreshAt = Date.distantPast
     private var simFastPollingDeadline: Date?
+    /// After a SIM slot change the first reads can be stale, so the regular
+    /// SIM refresh runs every few seconds until this deadline.
+    private var simSlotSettleRefreshDeadline: Date?
+    private static let simSlotSettleRefreshWindow: TimeInterval = 20
+    private static let simSlotSettleRefreshInterval: TimeInterval = 5
+    /// Right after AT+QUIMSLOT a module can briefly report "SIM not inserted"
+    /// while it is still detecting the card.
+    private static let simSlotAbsentSettleInterval: TimeInterval = 8
     private var consecutiveSIMQueryFailures = 0
     private var expectedRestartStartedAt: Date?
     private var expectedRestartObservedDisconnect = false
@@ -1537,6 +1545,7 @@ final class ModemService {
                 }
                 return
             }
+            let writeAcceptedAt = Date()
             let verify = self.command("AT+QUIMSLOT?", timeout: 3_000)
             guard verify.isSuccess,
                   let verifiedSlot = ATResponseParser.parseSIMSlot(verify.output) else {
@@ -1569,7 +1578,12 @@ final class ModemService {
                 let pin = self.command("AT+CPIN?", timeout: 3_000)
                 if let state = ATResponseParser.parseSIMState(pin.output) {
                     finalState = state
-                    break
+                    // "SIM not inserted" is provisional while the card may
+                    // still be detected; ready, PIN and PUK are definitive.
+                    if state != .absent ||
+                        Date().timeIntervalSince(writeAcceptedAt) >= Self.simSlotAbsentSettleInterval {
+                        break
+                    }
                 }
                 Thread.sleep(forTimeInterval: 1)
             }
@@ -1585,6 +1599,7 @@ final class ModemService {
             self.resetSMSConnectionState()
             _ = self.configureMessageService()
 
+            self.beginSIMSlotSettleRefresh()
             self.needsSIMRefresh = true
             self.needsImmediateMessagePoll = true
             self.tickNumber = 9
@@ -1603,6 +1618,25 @@ final class ModemService {
             }
             DispatchQueue.main.async { completion(.success(message)) }
         }
+    }
+
+    private func beginSIMSlotSettleRefresh() {
+        simSlotSettleRefreshDeadline = Date().addingTimeInterval(Self.simSlotSettleRefreshWindow)
+    }
+
+    /// Schedules the next regular SIM refresh, shortened while a slot change
+    /// is settling.
+    private func scheduleNextSIMRefresh(after interval: TimeInterval, from now: Date) {
+        if let deadline = simSlotSettleRefreshDeadline {
+            if now < deadline {
+                nextSIMRefreshAt = now.addingTimeInterval(
+                    min(interval, Self.simSlotSettleRefreshInterval)
+                )
+                return
+            }
+            simSlotSettleRefreshDeadline = nil
+        }
+        nextSIMRefreshAt = now.addingTimeInterval(interval)
     }
 
     private func clearPerCardSnapshotFields() {
@@ -2884,6 +2918,7 @@ final class ModemService {
         let isRestartReconnect = expectedRestartStartedAt != nil
         cancelQDCInitializationRetry()
         didQuerySIMIdentity = false
+        simSlotSettleRefreshDeadline = nil
         let usbLocationID = celldock_modem_location_id(modem)
         let usbNames = ModemUSBIdentityResolver.names(for: usbLocationID)
         let hardwareFamily = ModemHardwareFamily.classify(
@@ -3181,12 +3216,12 @@ final class ModemService {
             if isWithinFastPollingWindow, consecutiveSIMQueryFailures < 3 {
                 snapshot.simState = .initializing
                 snapshot.simLastError = nil
-                nextSIMRefreshAt = now.addingTimeInterval(2)
+                scheduleNextSIMRefresh(after: 2, from: now)
             } else {
                 snapshot.simState = .queryFailed
                 snapshot.simLastError = sim.error ?? L10n.tr("AT+CPIN? 未返回可识别的 SIM 状态。")
                 simFastPollingDeadline = nil
-                nextSIMRefreshAt = now.addingTimeInterval(15)
+                scheduleNextSIMRefresh(after: 15, from: now)
             }
             return
         }
@@ -3195,7 +3230,7 @@ final class ModemService {
         simFastPollingDeadline = nil
         snapshot.simState = state
         snapshot.simLastError = nil
-        nextSIMRefreshAt = now.addingTimeInterval(state == .ready ? 60 : 10)
+        scheduleNextSIMRefresh(after: state == .ready ? 60 : 10, from: now)
         guard state == .ready else {
             snapshot.simPhoneNumber = nil
             snapshot.simICCID = nil
@@ -3254,6 +3289,7 @@ final class ModemService {
         snapshot.simSlot = slot
         guard hadPreviousSlot else { return }
         clearPerCardSnapshotFields()
+        beginSIMSlotSettleRefresh()
         // The new card's stored messages are not new arrivals.
         resetSMSConnectionState()
         _ = configureMessageService()
