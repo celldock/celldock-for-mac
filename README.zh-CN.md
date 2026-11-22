@@ -6,6 +6,8 @@
 
 <h1 align="center">CellDock</h1>
 
+本机自动化：可选的[本地通话 API](docs/LOCAL_CALL_API.md) 支持程序查询状态、拨号、接听和挂断，复用 CellDock 现有通话与音频流程。默认关闭，启用后需使用令牌鉴权。
+
 <p align="center">
   在 Mac 上使用蜂窝网络、短信和电话。
 </p>

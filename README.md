@@ -6,6 +6,10 @@
 
 <h1 align="center">CellDock</h1>
 
+Local automation: the optional [local call API](docs/LOCAL_CALL_API.md) lets
+programs on this Mac query status, dial, answer, and hang up using CellDock's
+existing call and audio pipeline. It is disabled by default and requires a token.
+
 <p align="center">
   Use cellular network, SMS, and calls on your Mac.
 </p>
