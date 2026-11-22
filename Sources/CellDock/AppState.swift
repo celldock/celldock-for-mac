@@ -75,9 +75,28 @@ final class AppState: ObservableObject {
 
     func viewOfflineLine(_ line: CommunicationLine) {
         viewedOfflineLine = line
+        // Picking an offline line means wanting to see just that line.
+        setShowsAllLineRecords(false)
     }
 
-    /// The line whose records the communication lists show.
+    static let showsAllLineRecordsDefaultsKey = "CellDock.ShowsAllLineRecords.v1"
+
+    /// Messages, Recents and Recordings list every line's records instead of
+    /// only those of the line in the line selector.
+    @Published private(set) var showsAllLineRecords =
+        UserDefaults.standard.bool(forKey: AppState.showsAllLineRecordsDefaultsKey)
+
+    func setShowsAllLineRecords(_ showsAll: Bool) {
+        guard showsAll != showsAllLineRecords else { return }
+        showsAllLineRecords = showsAll
+        UserDefaults.standard.set(showsAll, forKey: Self.showsAllLineRecordsDefaultsKey)
+        // With every line listed, the selector only names the line that
+        // sends and dials, and an offline line can do neither.
+        if showsAll { viewedOfflineLine = nil }
+    }
+
+    /// The line picked in the line selector and the records the
+    /// communication lists show for it.
     var lineScope: LineScope {
         let resolver = lineAppearanceResolver
         if let viewedOfflineLine, !resolver.isOnline(viewedOfflineLine) {
@@ -87,7 +106,8 @@ final class AppState: ObservableObject {
         return LineScope(
             resolver: resolver,
             line: module.map { resolver.currentLine(of: $0) },
-            isOnline: module != nil
+            isOnline: module != nil,
+            showsAllRecords: showsAllLineRecords
         )
     }
 

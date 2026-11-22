@@ -82,6 +82,7 @@ struct MessagesWindowView: View {
 
     private func conversationSidebar(resolver: LineAppearanceResolver) -> some View {
         let visible = filtered(conversations)
+        let showsLineBadges = appState.lineScope.mixesLines
 
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -112,7 +113,11 @@ struct MessagesWindowView: View {
                     emptyListState
                 } else {
                     ForEach(visible) { conversation in
-                        conversationRow(conversation, resolver: resolver)
+                        conversationRow(
+                            conversation,
+                            resolver: resolver,
+                            showsLineBadge: showsLineBadges
+                        )
                     }
                 }
             }
@@ -154,7 +159,8 @@ struct MessagesWindowView: View {
 
     private func conversationRow(
         _ conversation: MessageConversation,
-        resolver: LineAppearanceResolver
+        resolver: LineAppearanceResolver,
+        showsLineBadge: Bool
     ) -> some View {
         let latestLine = conversation.latestLine
         let isSelected = selectedConversationID == conversation.id
@@ -169,7 +175,8 @@ struct MessagesWindowView: View {
             },
             unreadCount: conversation.unreadCount,
             latestIsOutgoing: conversation.latestMessage?.isOutgoing == true,
-            line: resolver.appearance(for: latestLine)
+            line: resolver.appearance(for: latestLine),
+            showsLineBadge: showsLineBadge
         )
         .communicationSelectionHighlight(isSelected)
         .contentShape(Rectangle())
@@ -190,8 +197,8 @@ struct MessagesWindowView: View {
         }
     }
 
-    /// The conversations of the line picked in the module selector, one per
-    /// peer.
+    /// One conversation per peer: on the line picked in the line selector,
+    /// or across every line when the lists show them all.
     private var conversations: [MessageConversation] {
         let scope = appState.lineScope
         return MessageConversation.groupedByPeer(

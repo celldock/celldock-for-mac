@@ -171,8 +171,10 @@ struct CommunicationModuleStatusMenu: View {
                 signalBars: selectedModule?.modem.signalBars ?? 0,
                 hasSignal: selectedModuleHasSignal,
                 isOffline: isViewingOffline,
-                showsAttention: hasAttentionElsewhere
+                showsAttention: hasAttentionElsewhere,
+                showsAllRecords: appState.showsAllLineRecords
             )
+            .animation(.smooth(duration: 0.22), value: appState.showsAllLineRecords)
             .contentShape(
                 RoundedRectangle(cornerRadius: LineSelectorLabel.cornerRadius, style: .continuous)
             )
@@ -245,7 +247,14 @@ struct CommunicationModuleStatusMenu: View {
         }
         .help(statusDescription)
         .accessibilityLabel(L10n.tr("蜂窝设备：%@", statusDescription))
-        .accessibilityValue(isPopoverPresented ? L10n.tr("已展开") : L10n.tr("已收起"))
+        .accessibilityValue(
+            [
+                isPopoverPresented ? L10n.tr("已展开") : L10n.tr("已收起"),
+                appState.showsAllLineRecords ? L10n.tr("正在显示全部线路的记录") : nil
+            ]
+            .compactMap { $0 }
+            .joined(separator: "，")
+        )
         .accessibilityHint(L10n.tr("显示并选择当前通信模组"))
     }
 
@@ -289,6 +298,14 @@ struct CommunicationModuleStatusMenu: View {
             } else {
                 onlineList(scope: scope)
             }
+
+            Divider()
+                .padding(.horizontal, 4)
+
+            AllRecordsSwitchRow(isOn: Binding(
+                get: { appState.showsAllLineRecords },
+                set: { appState.setShowsAllLineRecords($0) }
+            ))
         }
         .padding(8)
         .frame(width: 310)
@@ -348,81 +365,17 @@ struct CommunicationModuleStatusMenu: View {
         }
     }
 
-    private func lineRow(
-        appearance: LineAppearance,
-        title: String,
-        detail: String,
-        secondDetail: String? = nil,
-        attention: Int,
-        isSelected: Bool,
-        trailingStatus: String? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                if let badgeText = appearance.badgeText {
-                    LineBadge(text: badgeText, color: appearance.tint.solid)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: title)
-                        .font(.appBodyStrong)
-                        .lineLimit(1)
-
-                    Text(verbatim: detail)
-                        .font(.appCaption)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-
-                    if let secondDetail {
-                        Text(verbatim: secondDetail)
-                            .font(.appCaption)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.vertical, 6)
-
-                Spacer(minLength: 8)
-
-                if attention > 0 {
-                    UnreadCountPill(count: attention)
-                }
-
-                if isSelected {
-                    Image(systemName: "checkmark")
-                        .font(.appSymbol(.inline, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                } else if let trailingStatus {
-                    Text(verbatim: trailingStatus)
-                        .font(.appCaption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .background {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
-        }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
     private func moduleSelectionRow(_ module: CellularModuleSummary, scope: LineScope) -> some View {
         let resolver = scope.resolver
         let line = resolver.currentLine(of: module)
         let rowScope = LineScope(resolver: resolver, line: line, isOnline: true)
-        return lineRow(
+        return LineMenuRow(
             appearance: resolver.appearance(for: line),
             title: "\(module.displayName) · \(module.carrierName)",
             detail: moduleSelectionDetail(module),
             attention: appState.attentionCount(in: rowScope),
             isSelected: scope.isOnline && scope.line == line,
+            isEnabled: module.isCommunicationEligible,
             trailingStatus: module.isCommunicationEligible ? nil : module.statusText
         ) {
             guard module.isCommunicationEligible else { return }
@@ -437,7 +390,7 @@ struct CommunicationModuleStatusMenu: View {
         let appearance = scope.resolver.appearance(for: line)
         let rowScope = LineScope(resolver: scope.resolver, line: line, isOnline: false)
         let status = appearance.isAttached ? L10n.tr("卡槽未启用") : L10n.tr("模组已拔出")
-        return lineRow(
+        return LineMenuRow(
             appearance: appearance,
             title: appearance.title,
             detail: [status, appearance.carrier, appearance.identityDetail]
@@ -660,6 +613,7 @@ private struct RecentCallsView: View {
     var body: some View {
         let resolver = appState.lineAppearanceResolver
         let visible = filteredRecords
+        let showsLineBadges = appState.lineScope.mixesLines
 
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -707,7 +661,8 @@ private struct RecentCallsView: View {
                                 direction: record.direction,
                                 timestamp: CommunicationUI.listTimestamp(record.startedAt),
                                 hasRecording: matchingRecording(for: record) != nil,
-                                line: resolver.appearance(for: record.line)
+                                line: resolver.appearance(for: record.line),
+                                showsLineBadge: showsLineBadges
                             )
                             .contentShape(Rectangle())
                             .communicationSelectionHighlight(selectedRecordID == record.id)
@@ -753,6 +708,7 @@ private struct RecentCallsView: View {
         .onChange(of: missedOnly) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: searchText) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: appState.lineScope.line) { _, _ in ensureSelectionIsVisible() }
+        .onChange(of: appState.showsAllLineRecords) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: history.records) { _, _ in ensureSelectionIsVisible() }
         .confirmationDialog(
             "清除所有最近通话？",
@@ -766,7 +722,8 @@ private struct RecentCallsView: View {
         }
     }
 
-    /// The calls of the line picked in the module selector.
+    /// The calls of the line picked in the line selector, or of every line
+    /// when the lists show them all.
     private var filteredRecords: [CallHistoryRecord] {
         let scope = appState.lineScope
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -841,6 +841,27 @@ do {
             offlineScope.moduleID == nil,
         "an offline line is not limited to its own records or can still send"
     )
+    let allRecordsScope = LineScope(
+        resolver: lineResolver,
+        line: slotOne,
+        isOnline: true,
+        showsAllRecords: true
+    )
+    try expect(
+        allRecordsScope.contains(slotOne) && allRecordsScope.contains(slotTwo) &&
+            allRecordsScope.contains(firstLine) && allRecordsScope.contains(nil) &&
+            allRecordsScope.contains(CommunicationLine(moduleID: movedPort, simSlot: nil)),
+        "showing every line's records still left some out"
+    )
+    try expect(
+        allRecordsScope.moduleID == secondSIM && allRecordsScope.line == slotOne,
+        "showing every line's records changed the line that sends and dials"
+    )
+    try expect(
+        allRecordsScope.mixesLines && !onlineScope.mixesLines && !offlineScope.mixesLines &&
+            LineScope(resolver: lineResolver, line: nil, isOnline: false).mixesLines,
+        "rows are not marked with their line exactly when the lists mix lines"
+    )
     try expect(
         lineResolver.offlineLines(among: [slotOne, slotTwo, firstLine, slotTwo]) == [slotTwo] &&
             unpluggedResolver.offlineLines(among: [firstLine, slotOne]) == [firstLine],

@@ -1799,6 +1799,10 @@
 "离线" = "Hors ligne";
 "没有离线线路的记录" = "Aucun enregistrement sur des lignes hors ligne";
 "离线线路只能查看已有的短信和通话记录。" = "Les lignes hors ligne affichent uniquement leurs messages et appels existants.";
+"显示全部线路的记录" = "Afficher toutes les lignes";
+"短信、最近通话和录音不再按线路筛选" = "Messages, Appels récents et Enregistrements ne sont plus filtrés par ligne";
+"全部记录" = "Toutes lignes";
+"正在显示全部线路的记录" = "Les enregistrements de toutes les lignes sont affichés";
 "卡槽未启用" = "Emplacement SIM inactif";
 "模组已拔出" = "Module débranché";
 "%@ · 离线，仅查看" = "%@ · Hors ligne, lecture seule";

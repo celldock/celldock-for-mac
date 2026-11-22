@@ -34,6 +34,29 @@ struct UnreadCountPill: View {
     }
 }
 
+/// The avatar that starts a list row, and the gap after it.
+///
+/// A list of one line shows plain avatars: a badge would repeat on every row
+/// what the line selector already says. A list that mixes lines puts each
+/// row's line badge on its avatar and leaves the badge room to hang over.
+struct ListRowAvatar: View {
+    let address: String
+    let line: LineAppearance
+    let showsLineBadge: Bool
+
+    static func spacing(showsLineBadge: Bool) -> CGFloat {
+        showsLineBadge ? 14 : AppMetrics.Spacing.medium
+    }
+
+    var body: some View {
+        ContactFaceAvatar(
+            address: address,
+            badgeText: showsLineBadge ? line.badgeText : nil,
+            badgeColor: line.tint.solid
+        )
+    }
+}
+
 /// One conversation in the Messages list.
 struct ConversationRowContent: View {
     let title: String
@@ -42,11 +65,14 @@ struct ConversationRowContent: View {
     let timestamp: String?
     let unreadCount: Int
     let latestIsOutgoing: Bool
+    /// The line of the latest message.
     let line: LineAppearance
+    /// True while the list mixes lines.
+    var showsLineBadge = false
 
     var body: some View {
-        HStack(spacing: AppMetrics.Spacing.medium) {
-            ContactFaceAvatar(address: address)
+        HStack(spacing: ListRowAvatar.spacing(showsLineBadge: showsLineBadge)) {
+            ListRowAvatar(address: address, line: line, showsLineBadge: showsLineBadge)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {
@@ -97,10 +123,12 @@ struct CallRowContent: View {
     let timestamp: String
     let hasRecording: Bool
     let line: LineAppearance
+    /// True while the list mixes lines.
+    var showsLineBadge = false
 
     var body: some View {
-        HStack(spacing: AppMetrics.Spacing.medium) {
-            ContactFaceAvatar(address: address)
+        HStack(spacing: ListRowAvatar.spacing(showsLineBadge: showsLineBadge)) {
+            ListRowAvatar(address: address, line: line, showsLineBadge: showsLineBadge)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {
@@ -151,10 +179,12 @@ struct RecordingRowContent: View {
     /// "waveform" while playing, "play.fill" while paused, nil otherwise.
     var playbackSymbol: String? = nil
     let line: LineAppearance
+    /// True while the list mixes lines.
+    var showsLineBadge = false
 
     var body: some View {
-        HStack(spacing: AppMetrics.Spacing.medium) {
-            ContactFaceAvatar(address: address)
+        HStack(spacing: ListRowAvatar.spacing(showsLineBadge: showsLineBadge)) {
+            ListRowAvatar(address: address, line: line, showsLineBadge: showsLineBadge)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {

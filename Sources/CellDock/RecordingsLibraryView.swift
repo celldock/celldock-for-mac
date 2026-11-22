@@ -38,11 +38,8 @@ struct RecordingsLibraryView: View {
         .onChange(of: recordings.records.map(\.id)) { _, _ in
             selectFirstRecordingIfNeeded()
         }
-        .onChange(of: appState.lineScope.line) { _, _ in
-            if !filteredRecordingRecords.contains(where: { $0.id == selectedRecordingID }) {
-                selectedRecordingID = filteredRecordingRecords.first?.id
-            }
-        }
+        .onChange(of: appState.lineScope.line) { _, _ in keepSelectionListed() }
+        .onChange(of: appState.showsAllLineRecords) { _, _ in keepSelectionListed() }
         .onChange(of: selectedRecordingID) { _, _ in
             renameText = selectedRecording?.title ?? ""
             loadSelectedWaveform()
@@ -78,6 +75,7 @@ struct RecordingsLibraryView: View {
     private var recordingList: some View {
         let resolver = appState.lineAppearanceResolver
         let visible = filteredRecordingRecords
+        let showsLineBadges = appState.lineScope.mixesLines
 
         return VStack(spacing: 0) {
             TextField("搜索录音、联系人或号码", text: $searchText)
@@ -94,7 +92,11 @@ struct RecordingsLibraryView: View {
             .padding(.bottom, 10)
 
             List(visible) { record in
-                recordingRow(record, line: resolver.appearance(for: line(of: record)))
+                recordingRow(
+                    record,
+                    line: resolver.appearance(for: line(of: record)),
+                    showsLineBadge: showsLineBadges
+                )
                     .communicationSelectionHighlight(selectedRecordingID == record.id)
                     .contentShape(Rectangle())
                     .onTapGesture { selectedRecordingID = record.id }
@@ -128,7 +130,11 @@ struct RecordingsLibraryView: View {
         .communicationModuleFloatingSidebar()
     }
 
-    private func recordingRow(_ record: CallRecordingRecord, line: LineAppearance) -> some View {
+    private func recordingRow(
+        _ record: CallRecordingRecord,
+        line: LineAppearance,
+        showsLineBadge: Bool
+    ) -> some View {
         let isActive = recordings.playingRecordingID == record.id
         return RecordingRowContent(
             title: displayName(for: record),
@@ -140,7 +146,8 @@ struct RecordingsLibraryView: View {
             playbackSymbol: isActive
                 ? (recordings.isPlaybackPlaying ? "waveform" : "play.fill")
                 : nil,
-            line: line
+            line: line,
+            showsLineBadge: showsLineBadge
         )
     }
 
@@ -189,7 +196,8 @@ struct RecordingsLibraryView: View {
         }
     }
 
-    /// The recordings of the line picked in the module selector.
+    /// The recordings of the line picked in the line selector, or of every
+    /// line when the lists show them all.
     private var filteredRecordingRecords: [CallRecordingRecord] {
         let scope = appState.lineScope
         let directional = recordings.records.filter { record in
@@ -211,6 +219,15 @@ struct RecordingsLibraryView: View {
     private var selectedRecording: CallRecordingRecord? {
         guard let selectedRecordingID else { return nil }
         return recordings.records.first { $0.id == selectedRecordingID }
+    }
+
+    /// Moves the selection to the first listed recording when the lines the
+    /// list shows change and leave the selected one out.
+    private func keepSelectionListed() {
+        let listed = filteredRecordingRecords
+        if !listed.contains(where: { $0.id == selectedRecordingID }) {
+            selectedRecordingID = listed.first?.id
+        }
     }
 
     private func selectFirstRecordingIfNeeded() {

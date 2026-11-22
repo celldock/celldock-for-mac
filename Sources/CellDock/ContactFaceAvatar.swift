@@ -213,9 +213,9 @@ struct ContactFaceShape: Shape {
 
 /// A number's avatar: a soft, nearly flat disc with the number's face on it.
 ///
-/// Lists show one line at a time, so their avatars carry no badge. Places
-/// that show a single call, such as the dialer and the in-call view, pass the
-/// line badge of that call.
+/// A list of one line shows avatars without a badge. A list that mixes
+/// lines, and places that show a single call such as the dialer, pass the
+/// badge of the line.
 struct ContactFaceAvatar: View {
     @Environment(\.colorScheme) private var colorScheme
 

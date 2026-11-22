@@ -22,11 +22,14 @@ struct LineSelectorTitle: Equatable {
 }
 
 /// What the line selector at the bottom of the sidebar shows: signal, the
-/// line's title and a mark when another line needs attention.
+/// line's title, a tag while the lists show every line's records, and a mark
+/// when another line needs attention.
 ///
 /// It is as wide as the sidebar. The title stays on one line while it fits;
 /// in a narrower sidebar it takes two lines, the line's name over its
-/// carrier and network, rather than being cut off.
+/// carrier and network, rather than being cut off. The tag gives way before
+/// the title does: it shrinks to a symbol, and goes when even that would cut
+/// the title off.
 struct LineSelectorLabel: View {
     let title: LineSelectorTitle
     let signalBars: Int
@@ -35,6 +38,8 @@ struct LineSelectorLabel: View {
     var isOffline = false
     /// Another line has unread messages or missed calls.
     var showsAttention = false
+    /// The lists show every line's records; this line only sends and dials.
+    var showsAllRecords = false
 
     static let minimumHeight: CGFloat = 36
     static let cornerRadius: CGFloat = 15
@@ -52,21 +57,23 @@ struct LineSelectorLabel: View {
             .accessibilityHidden(true)
 
             ViewThatFits(in: .horizontal) {
-                Text(verbatim: title.full)
-                    .foregroundStyle(isOffline ? Color.secondary : Color.primary)
-                    .lineLimit(1)
+                titled(oneLine, tag: .words)
 
                 if title.detail != nil {
-                    twoLines
+                    titled(twoLines, tag: .words)
                 }
 
-                // Not even two lines fit: cut them off.
-                twoLines
-                    .frame(minWidth: 0, alignment: .leading)
+                if showsAllRecords {
+                    titled(twoLines, tag: .symbol)
+                    // The title matters more than the tag: the rows of the
+                    // lists carry line badges that say the same.
+                    titled(twoLines, tag: nil)
+                }
+
+                // Not even that fits: cut the title off.
+                titled(twoLines.frame(minWidth: 0, alignment: .leading), tag: nil)
             }
             .layoutPriority(1)
-
-            Spacer(minLength: 4)
 
             if showsAttention {
                 Circle()
@@ -88,6 +95,25 @@ struct LineSelectorLabel: View {
         .frame(minHeight: Self.minimumHeight)
     }
 
+    /// The title at the leading edge and, while the lists show every line,
+    /// the tag at the trailing edge.
+    private func titled(_ title: some View, tag: AllRecordsTag.Size?) -> some View {
+        let shownTag = showsAllRecords ? tag : nil
+        return HStack(spacing: 0) {
+            title
+            Spacer(minLength: shownTag == nil ? 12 : 6)
+            if let shownTag {
+                AllRecordsTag(size: shownTag)
+            }
+        }
+    }
+
+    private var oneLine: some View {
+        Text(verbatim: title.full)
+            .foregroundStyle(isOffline ? Color.secondary : Color.primary)
+            .lineLimit(1)
+    }
+
     private var twoLines: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(verbatim: title.line)
@@ -100,6 +126,41 @@ struct LineSelectorLabel: View {
                     .lineLimit(1)
             }
         }
+    }
+}
+
+/// Says that Messages, Recents and Recordings are listing every line's
+/// records, not only those of the line the selector names.
+struct AllRecordsTag: View {
+    enum Size {
+        /// "全部记录"
+        case words
+        /// A symbol, for where the words would crowd the title out.
+        case symbol
+    }
+
+    var size: Size = .words
+
+    var body: some View {
+        Group {
+            switch size {
+            case .words:
+                Text(verbatim: L10n.tr("全部记录"))
+                    .font(.appMicro)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+            case .symbol:
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.appSymbol(.indicator, weight: .semibold))
+                    .frame(width: 20)
+            }
+        }
+        .foregroundStyle(Color.accentColor)
+        .frame(height: 16)
+        .background(Color.accentColor.opacity(0.14), in: Capsule())
+        .help(L10n.tr("正在显示全部线路的记录"))
+        .accessibilityLabel(L10n.tr("正在显示全部线路的记录"))
     }
 }
 

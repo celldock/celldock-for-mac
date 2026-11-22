@@ -405,14 +405,18 @@ struct LineAppearanceResolver {
     }
 }
 
-/// The one line whose records the Messages, Recents and Recordings lists
-/// show. An online line is an attached module at its active SIM slot and can
-/// send and dial; an offline line is history that can only be read.
+/// The line picked in the line selector, and which records the Messages,
+/// Recents and Recordings lists show for it. An online line is an attached
+/// module at its active SIM slot and can send and dial; an offline line is
+/// history that can only be read.
 struct LineScope {
     let resolver: LineAppearanceResolver
     /// nil when no module is attached and no offline line is picked.
     let line: CommunicationLine?
     let isOnline: Bool
+    /// The lists show every line's records. `line` is then only the line
+    /// that sends and dials.
+    var showsAllRecords = false
 
     /// The attached module behind an online scope.
     var moduleID: CellularModuleID? {
@@ -423,7 +427,14 @@ struct LineScope {
         resolver.appearance(for: line)
     }
 
+    /// True when the lists hold records of more than one line, so each row
+    /// has to say which line it belongs to.
+    var mixesLines: Bool {
+        showsAllRecords || line == nil
+    }
+
     func contains(_ recordLine: CommunicationLine?) -> Bool {
+        if showsAllRecords { return true }
         guard let line else { return true }
         return isOnline
             ? resolver.record(recordLine, isOnOnlineLine: line)

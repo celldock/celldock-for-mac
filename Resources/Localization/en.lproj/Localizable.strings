@@ -1802,6 +1802,10 @@
 "离线" = "Offline";
 "没有离线线路的记录" = "No Records on Offline Lines";
 "离线线路只能查看已有的短信和通话记录。" = "Offline lines only show their existing messages and call records.";
+"显示全部线路的记录" = "Show Records from All Lines";
+"短信、最近通话和录音不再按线路筛选" = "Messages, Recents and Call Recordings are no longer filtered by line";
+"全部记录" = "All Records";
+"正在显示全部线路的记录" = "Showing records from all lines";
 "卡槽未启用" = "SIM Slot Not Active";
 "模组已拔出" = "Module Unplugged";
 "%@ · 离线，仅查看" = "%@ · Offline, View Only";
