@@ -129,7 +129,6 @@ final class ModemService {
     private var expectedRestartShutdownGrace = ModuleRestartPolicy.shutdownGrace(usbIdentity: nil)
     /// True while the service is in call recovery only because AT+CLCC could
     /// not be read, so no call was ever confirmed on the current instance.
-    private var callPresenceWasNeverConfirmed = false
     private var isRunning = false
     private var currentMessageStorage: String?
     private var readableMessageStorages: [String] = []
@@ -2545,7 +2544,6 @@ final class ModemService {
     }
 
     private func setCallIdle(reason: CallEndReason? = nil, error: String? = nil) {
-        callPresenceWasNeverConfirmed = false
         callSnapshot.phase = callSnapshot.voiceOverUSBSupported ? .idle : .unavailable
         // Keep what the reason refers to: "the other party hung up" is only
         // true of a call that had connected.
@@ -2577,7 +2575,6 @@ final class ModemService {
         invalidateCallAction()
         callCleanupScheduled = false
         needsPostCallInitialization = false
-        callPresenceWasNeverConfirmed = false
         callURCFramer.reset()
         callPollMisses = 0
         callSnapshot = CallSnapshot(
@@ -2745,7 +2742,7 @@ final class ModemService {
                 publishExpectedRestartWaitingState()
                 return
             }
-            var wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
+            let wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
             let result: Int32
             if wasRecoveringCall {
                 guard modemLocationID != 0 else {
@@ -2768,39 +2765,25 @@ final class ModemService {
                     publishExpectedRestartWaitingState()
                     return
                 }
-                var sameDevice = wasRecoveringCall
-                    ? connectedModemMatchesExpectedIdentity()
-                    : recordConnectedModemIdentity()
-                if wasRecoveringCall, !sameDevice,
-                   CallRecoveryPolicy.mayAdoptReenumeratedModule(
-                       callPresenceWasNeverConfirmed: callPresenceWasNeverConfirmed,
-                       hasPendingMediaCleanup: hasPendingMediaCleanup
-                   ) {
-                    // Nothing was ever known about a call on the instance that
-                    // is gone, so there is nothing to protect: start over with
-                    // the module that is attached now.
+                let reopened = CallRecoveryPolicy.reopenedModule(
+                    wasHoldingCall: wasRecoveringCall,
+                    isSameInstance: wasRecoveringCall
+                        ? connectedModemMatchesExpectedIdentity()
+                        : recordConnectedModemIdentity()
+                )
+                if reopened == .replacedInstance {
+                    // The enumeration that carried the call is gone. End the
+                    // call here, which also writes it to the history, and
+                    // take the module that answers now on its own terms.
                     resetCallConnectionState(disconnected: true)
-                    sameDevice = recordConnectedModemIdentity()
-                    wasRecoveringCall = false
-                }
-                if wasRecoveringCall, !sameDevice {
-                    celldock_modem_close(modem)
-                    callSnapshot.phase = .recovering
-                    callSnapshot.lastError = L10n.tr("原通话模块身份不匹配，拒绝连接其他模块。")
-                    publishCallSnapshot()
-                    return
+                    _ = recordConnectedModemIdentity()
                 }
                 resetSMSConnectionState()
                 consumeBufferedURCsBeforeCommands()
-                if wasRecoveringCall {
-                    if sameDevice {
-                        reconcileCallAfterATRecovery()
-                    } else {
-                        pcmSessionEnabled = false
-                        resetCallConnectionState(disconnected: true)
-                        initializeConnectedModem()
-                    }
-                } else {
+                switch reopened {
+                case .sameInstance:
+                    reconcileCallAfterATRecovery()
+                case .fresh, .replacedInstance:
                     if recoverExistingCallBeforeInitialization() {
                         return
                     }
@@ -2927,7 +2910,6 @@ final class ModemService {
             )
             pcmSessionEnabled = false
             needsPostCallInitialization = true
-            callPresenceWasNeverConfirmed = false
             if let primary = calls.first { applyCallInfo(primary) }
             callSnapshot.audioActive = false
             callSnapshot.lastError = L10n.tr("检测到模块中已有通话；为安全起见未自动接管麦克风，请先挂断。")
@@ -2977,7 +2959,6 @@ final class ModemService {
                 return true
             }
             needsPostCallInitialization = true
-            callPresenceWasNeverConfirmed = true
             callSnapshot.phase = .recovering
             callSnapshot.lastError = L10n.tr("启动时无法确认是否存在通话：%@", error)
             publishCallSnapshot()
@@ -3654,7 +3635,6 @@ final class ModemService {
     }
 
     private func applyCallInfo(_ info: ModemCallInfo) {
-        callPresenceWasNeverConfirmed = false
         callSnapshot.direction = info.direction
         if let number = info.number, !number.isEmpty {
             callSnapshot.number = number
@@ -3994,7 +3974,7 @@ final class ModemService {
             return L10n.tr("未知的 USB/AT 错误")
         }
         let value = String(cString: pointer)
-        return value.isEmpty ? L10n.tr("未知的 USB/AT 错误") : value
+        return value.isEmpty ? L10n.tr("未知的 USB/AT 错误") : ModemBridgeErrorText.localized(value)
     }
 
     private func publishSnapshot(_ value: ModemSnapshot) {

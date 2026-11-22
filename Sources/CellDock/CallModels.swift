@@ -138,3 +138,19 @@ enum ModemCallEvent: Equatable {
     case ended(CallEndReason)
     case pcmFlowReady(Bool)
 }
+
+/// The C bridge reports its errors in English, as diagnostics. The ones a
+/// person runs into during ordinary use are worded for them here; anything
+/// else is passed through unchanged.
+enum ModemBridgeErrorText {
+    static func localized(_ bridgeMessage: String) -> String {
+        switch bridgeMessage {
+        case "AT command timed out before a terminal response":
+            return L10n.tr("模块没有在规定时间内响应 AT 命令。")
+        case "QDC507/Quectel USB module is not connected":
+            return L10n.tr("模块未连接")
+        default:
+            return bridgeMessage
+        }
+    }
+}

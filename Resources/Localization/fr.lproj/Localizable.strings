@@ -142,6 +142,7 @@
 "蜂窝数据详情" = "Détails des données cellulaires";
 "让蜂窝优先" = "Donner la priorité au cellulaire";
 "模块未连接" = "Module déconnecté";
+"模块没有在规定时间内响应 AT 命令。" = "Le module n’a pas répondu à une commande AT dans le délai imparti.";
 "USB 枚举中" = "Détection USB";
 "模块初始化中" = "Initialisation du module";
 "模块需要配置" = "Configuration du module requise";

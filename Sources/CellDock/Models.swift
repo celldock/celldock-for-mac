@@ -383,18 +383,31 @@ enum CallRecoveryPolicy {
         isExpectingModuleRestart
     }
 
-    /// Whether a module that came back as a new USB enumeration may be
-    /// adopted while the service is still in call recovery.
+    /// What a module that just opened at the expected USB location is to a
+    /// call the service is still holding.
+    enum ReopenedModule: Equatable {
+        /// No call was being held. Initialize it like any attached module.
+        case fresh
+        /// The same USB enumeration answered again, so the call may still be
+        /// up on it. Reconcile over AT+CLCC.
+        case sameInstance
+        /// A new enumeration answered where the call's module used to be.
+        case replacedInstance
+    }
+
+    /// A call lives on one USB enumeration of its module. Once a different
+    /// enumeration answers at that location, the instance that carried the
+    /// call has left the bus: nothing can reach the call, or the cleanup
+    /// still owed to that instance, ever again. Holding the call open then
+    /// protects nothing and left the AT session down until the app was
+    /// restarted, with the call missing from the history.
     ///
-    /// A confirmed call stays bound to its module instance: another module
-    /// must never be mistaken for it. A recovery that only exists because the
-    /// call state could not be read protects nothing once that instance is
-    /// gone, and refusing the new one left the AT session down for good.
-    static func mayAdoptReenumeratedModule(
-        callPresenceWasNeverConfirmed: Bool,
-        hasPendingMediaCleanup: Bool
-    ) -> Bool {
-        callPresenceWasNeverConfirmed && !hasPendingMediaCleanup
+    /// The call is therefore over. The new enumeration is never taken for
+    /// its continuation: it is opened as a freshly attached module, which
+    /// includes the check for a call it may itself be carrying.
+    static func reopenedModule(wasHoldingCall: Bool, isSameInstance: Bool) -> ReopenedModule {
+        guard wasHoldingCall else { return .fresh }
+        return isSameInstance ? .sameInstance : .replacedInstance
     }
 }
 

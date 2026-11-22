@@ -1102,6 +1102,17 @@ do {
             == "\(L10n.tr("未接通"))\ncaution",
         "a refused dial did not carry the known voice-service caution"
     )
+    try expect(
+        ModemBridgeErrorText.localized("AT command timed out before a terminal response")
+            == L10n.tr("模块没有在规定时间内响应 AT 命令。") &&
+            ModemBridgeErrorText.localized("QDC507/Quectel USB module is not connected") == L10n.tr("模块未连接"),
+        "a bridge error that reaches the call screen was shown in the bridge's English"
+    )
+    try expect(
+        ModemBridgeErrorText.localized("AT interface reported an invalid response length")
+            == "AT interface reported an invalid response length",
+        "a diagnostic bridge error was replaced instead of passed through"
+    )
     var endedCall = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
     try expect(endedCall.lastEndDescription == nil, "an idle line with no ended call showed an end reason")
     endedCall.lastEndReason = .remoteHangup
@@ -5368,19 +5379,17 @@ do {
         "an unreadable call state during an expected restart was treated as a possible call"
     )
     try expect(
-        CallRecoveryPolicy.mayAdoptReenumeratedModule(
-            callPresenceWasNeverConfirmed: true,
-            hasPendingMediaCleanup: false
-        ) &&
-            !CallRecoveryPolicy.mayAdoptReenumeratedModule(
-                callPresenceWasNeverConfirmed: false,
-                hasPendingMediaCleanup: false
-            ) &&
-            !CallRecoveryPolicy.mayAdoptReenumeratedModule(
-                callPresenceWasNeverConfirmed: true,
-                hasPendingMediaCleanup: true
-            ),
-        "a re-enumerated module was adopted over a confirmed call, or refused without one"
+        CallRecoveryPolicy.reopenedModule(wasHoldingCall: false, isSameInstance: true) == .fresh &&
+            CallRecoveryPolicy.reopenedModule(wasHoldingCall: false, isSameInstance: false) == .fresh,
+        "a module opened without a held call was not treated as freshly attached"
+    )
+    try expect(
+        CallRecoveryPolicy.reopenedModule(wasHoldingCall: true, isSameInstance: true) == .sameInstance,
+        "a held call was given up although its own module instance answered again"
+    )
+    try expect(
+        CallRecoveryPolicy.reopenedModule(wasHoldingCall: true, isSameInstance: false) == .replacedInstance,
+        "a call was kept open on a module instance that has left the bus"
     )
 
     // MARK: SMS submission

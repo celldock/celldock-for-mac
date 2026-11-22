@@ -145,6 +145,7 @@
 "蜂窝数据详情" = "Cellular Data Details";
 "让蜂窝优先" = "Prioritize Cellular";
 "模块未连接" = "Module Disconnected";
+"模块没有在规定时间内响应 AT 命令。" = "The module did not answer an AT command in time.";
 "USB 枚举中" = "Enumerating USB";
 "模块初始化中" = "Initializing Module";
 "模块需要配置" = "Module Requires Setup";
