@@ -2105,22 +2105,54 @@ do {
         carrierIMSModem.incomingCallsForcedOn == false && !carrierIMSModem.incomingCallsEffective,
         "IMS left to the carrier configuration was shown as switched on without voice evidence"
     )
-    carrierIMSModem.volteCapabilityReportUnreliable = true
+    carrierIMSModem.volteSessionAvailable = true
     try expect(
         carrierIMSModem.voiceServiceAvailability == .available &&
             carrierIMSModem.voiceServiceCautionText == nil &&
             carrierIMSModem.incomingCallsEffective,
-        "a module proven to connect calls at VoLTE_cap 0 still warned with its IMS bearer up"
+        "a reported VoLTE session on carrier-configured IMS was not shown as able to take calls"
     )
-    carrierIMSModem.imsBearerActive = false
+
+    // A data-only RM520N-GL: everything about the line looks healthy and the
+    // firmware still refuses every call.
+    var firmwareVoiceOffModem = registeredModem
+    firmwareVoiceOffModem.voiceRegistrationState = .denied
+    firmwareVoiceOffModem.imsMode = 0
+    firmwareVoiceOffModem.imsBearerActive = true
+    firmwareVoiceOffModem.voiceDisableSetting = 1
     try expect(
-        carrierIMSModem.voiceServiceAvailability == .unknown,
-        "a distrusted VoLTE_cap was used as evidence once the IMS bearer was down"
+        firmwareVoiceOffModem.voiceServiceAvailability == .disabledByFirmware &&
+            firmwareVoiceOffModem.voiceServiceCautionText == L10n.tr("该模组的固件已关闭语音通话，目前仅支持数据。") &&
+            !firmwareVoiceOffModem.incomingCallsEffective,
+        "voice switched off in firmware was not reported before the VoLTE report settled"
     )
-    carrierIMSModem.volteSessionAvailable = true
+    firmwareVoiceOffModem.volteSessionAvailable = false
     try expect(
-        carrierIMSModem.voiceServiceAvailability == .available,
-        "a reported VoLTE session was ignored on a module whose negatives are distrusted"
+        firmwareVoiceOffModem.voiceServiceAvailability == .disabledByFirmware,
+        "voice switched off in firmware was overruled by IMS evidence"
+    )
+    firmwareVoiceOffModem.voiceDisableSetting = 2
+    try expect(
+        firmwareVoiceOffModem.voiceServiceAvailability == .volteNotReady,
+        "voice enabled in firmware was still reported as switched off"
+    )
+    firmwareVoiceOffModem.voiceDisableSetting = 1
+    firmwareVoiceOffModem.volteSessionAvailable = true
+    try expect(
+        firmwareVoiceOffModem.voiceServiceAvailability == .available,
+        "a reported VoLTE session was hidden by the firmware voice setting"
+    )
+    try expect(
+        ATResponseParser.parseVoiceDisableSetting("\r\n+QCALLCFG: \"voice_disable\",1\r\n\r\nOK\r\n") == 1 &&
+            ATResponseParser.parseVoiceDisableSetting("+QCALLCFG: \"voice_disable\",2\r\nOK") == 2,
+        "voice_disable setting parsing"
+    )
+    try expect(
+        ATResponseParser.parseVoiceDisableSetting("ERROR") == nil &&
+            ATResponseParser.parseVoiceDisableSetting("+QCALLCFG: \"voice_disable\",(0-3)\r\nOK") == nil &&
+            ATResponseParser.parseVoiceDisableSetting("+QCALLCFG: \"other\",1\r\nOK") == nil &&
+            ATResponseParser.parseVoiceDisableSetting("+QCALLCFG: \"voice_disable\",7\r\nOK") == nil,
+        "an unsupported or unrelated QCALLCFG answer was read as a voice setting"
     )
 
     var imsOffModem = registeredModem
@@ -2245,53 +2277,6 @@ do {
     try expect(
         volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(100)) == nil,
         "a reset debouncer kept its earlier negative reading"
-    )
-
-    try expect(
-        VoLTEReportCalibrationPolicy.callDisprovesReport(
-            reportedVoLTEAvailable: false,
-            packet: .registered,
-            voice: .denied
-        ),
-        "a call connected over LTE at VoLTE_cap 0 did not disprove the report"
-    )
-    try expect(
-        !VoLTEReportCalibrationPolicy.callDisprovesReport(
-            reportedVoLTEAvailable: true,
-            packet: .registered,
-            voice: .denied
-        ) &&
-            !VoLTEReportCalibrationPolicy.callDisprovesReport(
-                reportedVoLTEAvailable: nil,
-                packet: .registered,
-                voice: .denied
-            ) &&
-            !VoLTEReportCalibrationPolicy.callDisprovesReport(
-                reportedVoLTEAvailable: false,
-                packet: .registered,
-                voice: .registered
-            ) &&
-            !VoLTEReportCalibrationPolicy.callDisprovesReport(
-                reportedVoLTEAvailable: false,
-                packet: .notRegistered,
-                voice: .denied
-            ),
-        "a call that could have used circuit-switched voice, or had no negative report, disproved VoLTE_cap"
-    )
-    let calibrationSuiteName = "CellDockSelfTests.VoLTECalibration.\(UUID().uuidString)"
-    guard let calibrationDefaults = UserDefaults(suiteName: calibrationSuiteName) else {
-        throw SelfTestFailure.failed("could not create an isolated defaults suite")
-    }
-    defer { calibrationDefaults.removePersistentDomain(forName: calibrationSuiteName) }
-    let calibrationStore = VoiceCapabilityVerificationStore(defaults: calibrationDefaults)
-    calibrationStore.markVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW1")
-    try expect(
-        calibrationStore.isVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW1") &&
-            !calibrationStore.isVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW2") &&
-            !calibrationStore.isVoLTEReportUnreliable(imei: "860000000000002", firmwareVersion: "FW1") &&
-            !calibrationStore.isVoLTEReportUnreliable(imei: nil, firmwareVersion: "FW1") &&
-            !calibrationStore.isVerified(imei: "860000000000001", backend: .nativeQPCMV),
-        "VoLTE report calibration leaked across firmware, modules or the voice backend record"
     )
 
     let activeECMNetwork = CellularNetworkStatus(

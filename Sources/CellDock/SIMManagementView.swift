@@ -1406,7 +1406,7 @@ struct SIMManagementView: View {
                 return L10n.tr("IMS 由运营商配置启用，模块可以接收来电")
             case .volteNotReady:
                 return L10n.tr("IMS 由运营商配置决定，模块未报告 VoLTE 就绪；开启后将强制启用 IMS")
-            case .imsDisabled, .likelyDataOnly:
+            case .disabledByFirmware, .imsDisabled, .likelyDataOnly:
                 return L10n.tr("模块不会接收运营商来电")
             case .unknown, .unavailable:
                 return L10n.tr("IMS 由运营商配置决定")
@@ -1937,6 +1937,7 @@ struct SIMManagementView: View {
         switch selectedModem.voiceServiceAvailability {
         case .unavailable: return L10n.tr("不可用")
         case .available: return L10n.tr("可用")
+        case .disabledByFirmware: return L10n.tr("固件已关闭语音")
         case .imsDisabled: return L10n.tr("未开启 IMS")
         case .volteNotReady: return L10n.tr("VoLTE 未就绪")
         case .likelyDataOnly: return L10n.tr("可能仅数据")
@@ -1947,7 +1948,7 @@ struct SIMManagementView: View {
     private var voiceServiceColor: Color {
         switch selectedModem.voiceServiceAvailability {
         case .available: return .green
-        case .imsDisabled, .volteNotReady, .likelyDataOnly: return .orange
+        case .disabledByFirmware, .imsDisabled, .volteNotReady, .likelyDataOnly: return .orange
         case .unavailable, .unknown: return .secondary
         }
     }

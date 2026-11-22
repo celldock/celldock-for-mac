@@ -55,6 +55,9 @@ enum CellularRegistrationState: Equatable {
 enum VoiceServiceAvailability: Equatable {
     case unavailable
     case available
+    /// The module's firmware has voice calls switched off. Dialing answers
+    /// NO CARRIER whatever the SIM and the network would allow.
+    case disabledByFirmware
     /// The module's IMS is switched off or was never brought up, so there is
     /// no VoLTE to place a call over. The SIM is not the problem.
     case imsDisabled
@@ -144,56 +147,10 @@ struct VoiceCapabilityVerificationStore {
 
     func markVerified(imei: String?, backend: ModemVoiceBackend) {
         guard let key = Self.key(imei: imei, backend: backend) else { return }
-        insert(key, into: Self.defaultsKey)
-    }
-
-    // MARK: VoLTE_cap reliability
-
-    /// Firmware whose AT+QCFG="ims" VoLTE_cap stayed 0 while a call connected
-    /// over LTE. Keyed by IMEI and firmware: an update may fix the report.
-    static let unreliableVoLTEReportDefaultsKey = "VoLTECapabilityReportUnreliableModules.v1"
-
-    static func voLTEReportKey(imei: String?, firmwareVersion: String?) -> String? {
-        guard let imei = imei?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !imei.isEmpty else {
-            return nil
-        }
-        let firmware = firmwareVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return "\(imei)|\(firmware)"
-    }
-
-    func isVoLTEReportUnreliable(imei: String?, firmwareVersion: String?) -> Bool {
-        guard let key = Self.voLTEReportKey(imei: imei, firmwareVersion: firmwareVersion) else {
-            return false
-        }
-        return (defaults.stringArray(forKey: Self.unreliableVoLTEReportDefaultsKey) ?? []).contains(key)
-    }
-
-    func markVoLTEReportUnreliable(imei: String?, firmwareVersion: String?) {
-        guard let key = Self.voLTEReportKey(imei: imei, firmwareVersion: firmwareVersion) else { return }
-        insert(key, into: Self.unreliableVoLTEReportDefaultsKey)
-    }
-
-    private func insert(_ key: String, into defaultsKey: String) {
-        var keys = defaults.stringArray(forKey: defaultsKey) ?? []
+        var keys = defaults.stringArray(forKey: Self.defaultsKey) ?? []
         guard !keys.contains(key) else { return }
         keys.append(key)
-        defaults.set(keys, forKey: defaultsKey)
-    }
-}
-
-/// When a connected call proves that VoLTE_cap 0 was wrong.
-enum VoLTEReportCalibrationPolicy {
-    /// A call is active on a packet-registered module with no circuit-switched
-    /// registration to fall back to, so it can only be running over IMS. If
-    /// the module said VoLTE was unavailable right before it, that report is
-    /// not a usable negative on this firmware.
-    static func callDisprovesReport(
-        reportedVoLTEAvailable: Bool?,
-        packet: CellularRegistrationState,
-        voice: CellularRegistrationState
-    ) -> Bool {
-        reportedVoLTEAvailable == false && packet.hasService && !voice.hasService
+        defaults.set(keys, forKey: Self.defaultsKey)
     }
 }
 
@@ -506,12 +463,13 @@ struct ModemSnapshot: Equatable {
     /// Quectel AT+QCFG="ims" VoLTE_cap. A value of 1 means a VoLTE
     /// session is available, not merely that IMS was enabled in settings.
     var volteSessionAvailable: Bool?
+    /// AT+QCALLCFG="voice_disable" as reported, on firmware that has it. 1 is
+    /// what a data-only RM520N-GL ships with and makes ATD answer NO CARRIER;
+    /// 2 is the value Quectel support gives for enabling calls.
+    var voiceDisableSetting: Int?
     /// Whether an IMS PDN is up (the IMS APN context is active). It shows
     /// that IMS is running, not that IMS registration succeeded.
     var imsBearerActive: Bool?
-    /// This module has connected a call over LTE while reporting VoLTE_cap 0,
-    /// so on it that field cannot be read as "no voice service".
-    var volteCapabilityReportUnreliable = false
     var usbConfiguration: ModemUSBConfiguration?
     var endpointDescription: String?
     var lastError: String?
@@ -557,6 +515,11 @@ struct ModemSnapshot: Equatable {
         if volteSessionAvailable == true {
             return .available
         }
+        if voiceDisableSetting == 1 {
+            // A firmware setting, not a state: it holds with or without
+            // registration and no other reading can argue with it.
+            return .disabledByFirmware
+        }
 
         // CREG only reports network registration; it does not prove that the
         // subscription authorizes voice calls. Some LTE modules also report
@@ -564,12 +527,6 @@ struct ModemSnapshot: Equatable {
         // likewise only supporting information and is intentionally ignored.
         guard registrationState.hasService else { return .unknown }
 
-        if volteCapabilityReportUnreliable {
-            // A call has connected on this module while it reported
-            // VoLTE_cap 0, so 0 says nothing here. The IMS bearer is what was
-            // up when that call worked.
-            return imsBearerActive == true ? .available : .unknown
-        }
         guard volteSessionAvailable == false else { return .unknown }
 
         // VoLTE is not ready. Say why, as far as the module lets us tell: a
@@ -591,6 +548,8 @@ struct ModemSnapshot: Equatable {
     /// there is nothing to warn about. Shared so every dialer says the same.
     var voiceServiceCautionText: String? {
         switch voiceServiceAvailability {
+        case .disabledByFirmware:
+            return L10n.tr("该模组的固件已关闭语音通话，目前仅支持数据。")
         case .likelyDataOnly:
             return L10n.tr("该 SIM 可能仅支持数据，未检测到可用语音服务。")
         case .imsDisabled:

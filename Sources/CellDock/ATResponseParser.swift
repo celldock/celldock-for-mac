@@ -98,6 +98,24 @@ enum ATResponseParser {
         return capability == 1
     }
 
+    /// AT+QCALLCFG="voice_disable": the firmware switch that takes voice
+    /// calls away from data-only Quectel modules such as the RM520N-GL.
+    static func parseVoiceDisableSetting(_ response: String) -> Int? {
+        guard let line = normalizedLines(response).first(where: {
+            $0.uppercased().hasPrefix("+QCALLCFG:") && $0.lowercased().contains("\"voice_disable\"")
+        }) else {
+            return nil
+        }
+        let fields = splitCSV(String(line.dropFirst("+QCALLCFG:".count)))
+        guard fields.count >= 2,
+              unquote(fields[0]).lowercased() == "voice_disable",
+              let value = Int(fields[1].trimmingCharacters(in: .whitespaces)),
+              (0 ... 3).contains(value) else {
+            return nil
+        }
+        return value
+    }
+
     /// Whether an IMS PDN is up: a context whose APN is the IMS APN in
     /// AT+CGDCONT? that AT+CGACT? reports as active.
     ///

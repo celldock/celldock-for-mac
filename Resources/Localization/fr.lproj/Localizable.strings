@@ -1360,6 +1360,8 @@
 "可能仅数据" = "Données uniquement probable";
 "语音能力未知" = "Capacité vocale inconnue";
 "该 SIM 可能仅支持数据，未检测到可用语音服务。" = "Cette SIM est peut-être réservée aux données ; aucun service vocal disponible n’a été détecté.";
+"该模组的固件已关闭语音通话，目前仅支持数据。" = "Le micrologiciel de ce module a désactivé les appels vocaux ; il est limité aux données pour l’instant.";
+"固件已关闭语音" = "Voix désactivée par le micrologiciel";
 "模组未开启 IMS，请在 SIM 页开启“接收来电”。" = "IMS est désactivé sur ce module. Activez « Recevoir les appels » dans la page SIM.";
 "模组未报告 VoLTE 就绪，通话可能无法接通。" = "Le module ne signale pas que la VoLTE est prête ; les appels risquent de ne pas aboutir.";
 "未开启 IMS" = "IMS désactivé";

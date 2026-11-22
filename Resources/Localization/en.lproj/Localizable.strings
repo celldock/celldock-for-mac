@@ -1364,6 +1364,8 @@
 "可能仅数据" = "Likely Data Only";
 "语音能力未知" = "Voice Capability Unknown";
 "该 SIM 可能仅支持数据，未检测到可用语音服务。" = "This SIM may be data-only; no available voice service was detected.";
+"该模组的固件已关闭语音通话，目前仅支持数据。" = "This module’s firmware has voice calls turned off; it is data-only for now.";
+"固件已关闭语音" = "Voice Off in Firmware";
 "模组未开启 IMS，请在 SIM 页开启“接收来电”。" = "IMS is off on this module. Turn on “Receive Calls” on the SIM page.";
 "模组未报告 VoLTE 就绪，通话可能无法接通。" = "The module does not report VoLTE as ready; calls may not connect.";
 "未开启 IMS" = "IMS Off";

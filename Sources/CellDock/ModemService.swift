@@ -3078,10 +3078,6 @@ final class ModemService {
             }
             .joined(separator: " ")
         snapshot.firmwareVersion = firmwareIdentity.isEmpty ? nil : firmwareIdentity
-        snapshot.volteCapabilityReportUnreliable = voiceVerificationStore.isVoLTEReportUnreliable(
-            imei: snapshot.moduleIMEI,
-            firmwareVersion: snapshot.firmwareVersion
-        )
         // Single-slot firmware (QDC507/EG25) never receives AT+QUIMSLOT.
         if SIMSlotSwitchingPolicy.firmwareMayHaveDualSlots(snapshot.firmwareVersion) {
             let slotResponse = command("AT+QUIMSLOT?", timeout: 3_000)
@@ -3097,6 +3093,16 @@ final class ModemService {
         let pcmCapability: CommandResult? = hardwareFamily == .quectelNativeVoice
             ? command("AT+QPCMV=?", timeout: 3_000)
             : nil
+        if hardwareFamily == .quectelNativeVoice {
+            // Data-only Quectel modules keep the call commands and the PCM
+            // channel but refuse every call. Firmware without this setting
+            // answers ERROR, which leaves it unknown. Never sent to customized
+            // QDC firmware.
+            let voiceDisable = command("AT+QCALLCFG=\"voice_disable\"", timeout: 3_000)
+            snapshot.voiceDisableSetting = voiceDisable.isSuccess
+                ? ATResponseParser.parseVoiceDisableSetting(voiceDisable.output)
+                : nil
+        }
         let supportsRawPCM = pcmCapability?.isSuccess == true &&
             CallATParser.testResponseSupportsRawPCM(pcmCapability?.output ?? "") &&
             modemLocationID != 0
@@ -4012,39 +4018,21 @@ final class ModemService {
     }
 
     /// A call that is active with its media path running is the only proof
-    /// that voice works end to end on this module. Record what it proves:
-    /// that the backend works, and, when the module had just reported VoLTE
-    /// as unavailable, that this report is not to be believed on it.
-    private func recordConnectedCallEvidenceIfNeeded() {
-        guard callSnapshot.phase == .active, callSnapshot.audioActive else { return }
-        var changed = false
-        if case let .supported(backend, verified) = snapshot.voiceCapability, !verified {
-            voiceVerificationStore.markVerified(imei: snapshot.moduleIMEI, backend: backend)
-            snapshot.voiceCapability = snapshot.voiceCapability.verifiedByCall
-            changed = true
+    /// that the voice backend works end to end on this module.
+    private func markVoiceCapabilityVerifiedIfNeeded() {
+        guard callSnapshot.phase == .active,
+              callSnapshot.audioActive,
+              case let .supported(backend, verified) = snapshot.voiceCapability,
+              !verified else {
+            return
         }
-        // The radio snapshot is not refreshed during a call, so these are the
-        // readings from just before it.
-        if !snapshot.volteCapabilityReportUnreliable,
-           VoLTEReportCalibrationPolicy.callDisprovesReport(
-               reportedVoLTEAvailable: lastReportedVoLTEAvailable,
-               packet: snapshot.registrationState,
-               voice: snapshot.voiceRegistrationState
-           ) {
-            voiceVerificationStore.markVoLTEReportUnreliable(
-                imei: snapshot.moduleIMEI,
-                firmwareVersion: snapshot.firmwareVersion
-            )
-            snapshot.volteCapabilityReportUnreliable = true
-            changed = true
-        }
-        if changed {
-            publishSnapshot(snapshot)
-        }
+        voiceVerificationStore.markVerified(imei: snapshot.moduleIMEI, backend: backend)
+        snapshot.voiceCapability = snapshot.voiceCapability.verifiedByCall
+        publishSnapshot(snapshot)
     }
 
     private func publishCallSnapshot() {
-        recordConnectedCallEvidenceIfNeeded()
+        markVoiceCapabilityVerifiedIfNeeded()
         callSnapshot.mediaCleanupPending = hasPendingMediaCleanup
         callSnapshot.uacMedia = voiceAudio.uacMediaSnapshot
         let value = callSnapshot
