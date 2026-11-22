@@ -43,17 +43,10 @@ struct ConversationRowContent: View {
     let unreadCount: Int
     let latestIsOutgoing: Bool
     let line: LineAppearance
-    /// Another line this peer has also been reached through.
-    var secondaryLine: LineAppearance? = nil
 
     var body: some View {
-        HStack(spacing: 14) {
-            ContactFaceAvatar(
-                address: address,
-                tint: line.tint,
-                badgeText: line.badgeText,
-                secondaryBadgeColor: secondaryLine?.tint.solid
-            )
+        HStack(spacing: AppMetrics.Spacing.medium) {
+            ContactFaceAvatar(address: address)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {
@@ -90,12 +83,7 @@ struct ConversationRowContent: View {
             }
         }
         .padding(.vertical, 4)
-        .help(lineHelp)
-    }
-
-    private var lineHelp: String {
-        guard let secondaryLine else { return line.fullTitle }
-        return L10n.tr("最近一次通过 %@，也用过 %@", line.fullTitle, secondaryLine.fullTitle)
+        .help(line.fullTitle)
     }
 }
 
@@ -111,12 +99,8 @@ struct CallRowContent: View {
     let line: LineAppearance
 
     var body: some View {
-        HStack(spacing: 14) {
-            ContactFaceAvatar(
-                address: address,
-                tint: line.tint,
-                badgeText: line.badgeText
-            )
+        HStack(spacing: AppMetrics.Spacing.medium) {
+            ContactFaceAvatar(address: address)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {
@@ -169,12 +153,8 @@ struct RecordingRowContent: View {
     let line: LineAppearance
 
     var body: some View {
-        HStack(spacing: 14) {
-            ContactFaceAvatar(
-                address: address,
-                tint: line.tint,
-                badgeText: line.badgeText
-            )
+        HStack(spacing: AppMetrics.Spacing.medium) {
+            ContactFaceAvatar(address: address)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: AppMetrics.Spacing.small) {

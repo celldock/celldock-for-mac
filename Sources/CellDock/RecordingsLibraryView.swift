@@ -353,11 +353,8 @@ private struct RecordingDetailPane: View {
         HStack(spacing: 16) {
             ContactFaceAvatar(
                 address: record.number,
-                size: AppMetrics.Avatar.large,
-                tint: line.tint,
-                badgeText: line.badgeText
+                size: AppMetrics.Avatar.large
             )
-            .help(line.fullTitle)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(displayName)

@@ -75,8 +75,8 @@ struct DialerView: View {
                 ContactFaceAvatar(
                     address: model.dialNumber,
                     size: metrics.avatarSize,
-                    tint: dialingLine.tint,
-                    badgeText: dialingLine.badgeText
+                    badgeText: dialingLine.badgeText,
+                    badgeColor: dialingLine.tint.solid
                 )
                 .help(dialingLine.fullTitle)
             }

@@ -744,8 +744,8 @@ private struct ActiveCallView: View {
             ContactFaceAvatar(
                 address: appState.call.number ?? "",
                 size: compact ? 74 : 94,
-                tint: callLine.tint,
-                badgeText: callLine.badgeText
+                badgeText: callLine.badgeText,
+                badgeColor: callLine.tint.solid
             )
             .help(callLine.fullTitle)
 
@@ -1471,9 +1471,7 @@ private struct RecentCallDetailView: View {
         HStack(spacing: 18) {
             ContactFaceAvatar(
                 address: record.number,
-                size: AppMetrics.Avatar.hero,
-                tint: line.tint,
-                badgeText: line.badgeText
+                size: AppMetrics.Avatar.hero
             )
 
             VStack(alignment: .leading, spacing: 2) {

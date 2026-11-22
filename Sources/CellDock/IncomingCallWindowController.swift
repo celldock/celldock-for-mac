@@ -462,10 +462,9 @@ private struct CallIslandView: View {
         return ContactFaceAvatar(
             address: appState.call.number ?? "",
             size: 44,
-            tint: line.tint,
-            badgeText: line.badgeText
+            badgeText: line.badgeText,
+            badgeColor: line.tint.solid
         )
-        .shadow(color: line.tint.solid.opacity(0.18), radius: 6, y: 2)
         .help(line.fullTitle)
     }
 

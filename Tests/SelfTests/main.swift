@@ -850,24 +850,75 @@ do {
     // MARK: Faces
 
     try expect(
-        ContactFace.face(for: "+86 138-0013-8000") == ContactFace.face(for: "138 0013 8000") &&
-            ContactFace.face(for: "13800138000").expression != .robot,
+        ContactFace.face(for: "+86 138-0013-8000") == ContactFace.face(for: "138 0013 8000"),
         "the same number written differently got different faces"
     )
+    // The values below come from the reference generator in the design
+    // prototype; the app has to draw exactly the faces that were approved.
+    func faceMatches(
+        _ number: String,
+        eyes: ContactFace.Eyes,
+        mouth: ContactFace.Mouth,
+        palette: Int,
+        _ values: [Double],
+        blush: Bool
+    ) -> Bool {
+        let face = ContactFace.face(for: number)
+        let actual = [
+            face.eyeGap, face.eyeY, face.mouthY, face.mouthWidth,
+            face.gazeX, face.gazeY, face.tilt,
+        ]
+        return face.eyes == eyes && face.mouth == mouth && face.paletteIndex == palette &&
+            face.hasBlush == blush &&
+            zip(actual, values).allSatisfy { abs($0 - $1) < 0.0001 }
+    }
     try expect(
-        Set((0 ..< 200).map { ContactFace.face(for: "1380013\(8000 + $0)").expression }).count ==
-            ContactFaceExpression.human.count,
-        "personal numbers do not spread over every expression"
+        faceMatches(
+            "13800138000", eyes: .oval, mouth: .cat, palette: 3,
+            [4.1857, 14.6167, 19.7084, 4.8295, -0.6030, -0.3575, -6.6339], blush: false
+        ) && faceMatches(
+            "+86 139 0013 9000", eyes: .smiling, mouth: .grin, palette: 5,
+            [4.6371, 14.7150, 19.8538, 4.9459, -0.9516, 0.0940, -3.7523], blush: false
+        ) && faceMatches(
+            "15500001111", eyes: .dot, mouth: .grin, palette: 6,
+            [4.1429, 14.4934, 19.8226, 5.2420, 2.0084, 0.4012, -7.7815], blush: false
+        ) && faceMatches(
+            "10086", eyes: .square, mouth: .smile, palette: 6,
+            [4.8212, 14.2848, 19.6922, 5.5187, 0, 0, 0], blush: false
+        ),
+        "faces no longer match the approved reference generator"
+    )
+    try expect(
+        ContactFace.face(for: "13800131003").eyes == .winkRight &&
+            ContactFace.face(for: "13800131005").hasBlush &&
+            ContactFace.face(for: "13800131005").mouth == .wide,
+        "wink or blush is not drawn from the number as in the reference generator"
+    )
+    let sampleFaces = (0 ..< 400).map { ContactFace.face(for: "1380013\(1000 + $0)") }
+    try expect(
+        Set(sampleFaces.map(\.eyes)) == [.dot, .oval, .smiling, .winkLeft, .winkRight] &&
+            Set(sampleFaces.map(\.mouth)) == [.smile, .wide, .grin, .cat] &&
+            Set(sampleFaces.map(\.paletteIndex)) == Set(0 ..< ContactFace.paletteCount),
+        "personal numbers do not spread over every eye, mouth and colour"
+    )
+    try expect(
+        sampleFaces.allSatisfy { face in
+            (4.0 ... 5.0).contains(face.eyeGap) && (4.8 ... 6.4).contains(face.mouthWidth) &&
+                abs(face.gazeX) <= 2.2 && abs(face.gazeY + 0.2) <= 0.7 && abs(face.tilt) <= 8 &&
+                face.mouthY - face.eyeY >= 5.0
+        },
+        "a face trait left its range, so features could collide or leave the disc"
     )
     for automated in ["10086", "95588", "106 9055 0100", "400 800 0100", "BANK", "12306"] {
+        let face = ContactFace.face(for: automated)
         try expect(
-            ContactFace.face(for: automated).expression == .robot,
-            "automated sender \(automated) was drawn with a human face"
+            face.eyes == .square && face.mouth == .smile && face.tilt == 0 && !face.hasBlush,
+            "automated sender \(automated) was not drawn as the smiling robot"
         )
     }
     for personal in ["+86 139 0013 9000", "+1 (415) 555-0132", "021 5555 0123", ""] {
         try expect(
-            ContactFace.face(for: personal).expression != .robot,
+            ContactFace.face(for: personal).eyes != .square,
             "personal number \(personal) was drawn as an automated sender"
         )
     }

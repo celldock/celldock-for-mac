@@ -157,9 +157,6 @@ struct MessagesWindowView: View {
         resolver: LineAppearanceResolver
     ) -> some View {
         let latestLine = conversation.latestLine
-        // A second badge only when the peer was also reached through another
-        // module; two SIM slots of one module already share a colour.
-        let otherLine = conversation.lines.last { $0.moduleID != latestLine?.moduleID }
         let isSelected = selectedConversationID == conversation.id
         return ConversationRowContent(
             title: presentedIdentity(for: conversation),
@@ -172,8 +169,7 @@ struct MessagesWindowView: View {
             },
             unreadCount: conversation.unreadCount,
             latestIsOutgoing: conversation.latestMessage?.isOutgoing == true,
-            line: resolver.appearance(for: latestLine),
-            secondaryLine: otherLine.map { resolver.appearance(for: $0) }
+            line: resolver.appearance(for: latestLine)
         )
         .communicationSelectionHighlight(isSelected)
         .contentShape(Rectangle())
@@ -323,8 +319,7 @@ private struct MessageThreadView: View {
         HStack(spacing: 10) {
             ContactFaceAvatar(
                 address: conversation.address,
-                size: AppMetrics.Avatar.header,
-                tint: resolver.appearance(for: conversation.latestLine).tint
+                size: AppMetrics.Avatar.header
             )
 
             VStack(alignment: .leading, spacing: 1) {
