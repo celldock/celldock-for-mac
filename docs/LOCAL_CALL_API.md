@@ -110,9 +110,9 @@ Status and successful action snapshots also expose optional `lastEndReason` and
 `code` is included only for modem result codes (trimmed and uppercased). A generic
 `NO CARRIER` or empty CLCC list cannot distinguish remote hangup, rejection, a
 powered-off phone, loss of signal, or a network release. The API does not invent
-those distinctions or query vendor-specific release-cause commands. `remoteHangup`
-remains a legacy value for reading existing call history; new generic releases
-are recorded as `unknown` instead.
+those distinctions or query vendor-specific release-cause commands. Inside the app
+such a release is still shown as the other side hanging up; the API never returns
+`remoteHangup` and reports it as `unknown`.
 
 Late generic release indications do not overwrite a confirmed local hangup or a
 specific modem result such as `NO ANSWER`. Evidence is cleared when a new call

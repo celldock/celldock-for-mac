@@ -11,6 +11,12 @@ struct LocalCallAPIStatus: Encodable {
     let lastEndReason: String?
     let lastEndEvidence: CallEndEvidence?
 
+    /// The app labels a generic release as the other side hanging up; the
+    /// API only states what the modem reported, so it says unknown.
+    static func reportedReason(_ reason: CallEndReason) -> CallEndReason {
+        reason == .remoteHangup ? .unknown : reason
+    }
+
     init(call: CallSnapshot, isChangingCall: Bool) {
         phase = call.phase.rawValue
         moduleID = call.moduleID?.rawValue
@@ -19,7 +25,7 @@ struct LocalCallAPIStatus: Encodable {
         muted = call.muted
         self.isChangingCall = isChangingCall
         lastError = call.lastError
-        lastEndReason = call.lastEndReason?.rawValue
+        lastEndReason = call.lastEndReason.map(Self.reportedReason)?.rawValue
         lastEndEvidence = call.lastEndEvidence
     }
 }

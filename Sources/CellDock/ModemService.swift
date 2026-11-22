@@ -2707,8 +2707,8 @@ final class ModemService {
         callSnapshot.phase = callSnapshot.voiceOverUSBSupported ? .idle : .unavailable
         // Keep what the reason refers to: "the other party hung up" is only
         // true of a call that had connected.
-        callSnapshot.lastCallDirection = reason == nil ? nil : callSnapshot.direction
-        callSnapshot.lastCallWasConnected = reason != nil && callSnapshot.startedAt != nil
+        let endedDirection = callSnapshot.direction
+        let endedWasConnected = callSnapshot.startedAt != nil
         callSnapshot.direction = nil
         callSnapshot.number = nil
         callSnapshot.audioActive = false
@@ -2716,7 +2716,12 @@ final class ModemService {
         voiceAudio.setMuted(false)
         callSnapshot.startedAt = nil
         if let reason {
-            callSnapshot.recordEnd(reason, evidence: evidence)
+            // A late generic indication that does not replace the recorded
+            // reason must not replace what that reason refers to either.
+            if callSnapshot.recordEnd(reason, evidence: evidence) {
+                callSnapshot.lastCallDirection = endedDirection
+                callSnapshot.lastCallWasConnected = endedWasConnected
+            }
         } else {
             callSnapshot.clearEnd()
         }
@@ -2765,7 +2770,7 @@ final class ModemService {
         if uppercase.contains("BUSY") { return CallEndReason.busy.localizedDescription }
         if uppercase.contains("NO ANSWER") { return CallEndReason.noAnswer.localizedDescription }
         if uppercase.contains("NO DIAL") { return CallEndReason.noDialTone.localizedDescription }
-        if uppercase.contains("NO CARRIER") { return CallEndReason.unknown.localizedDescription }
+        if uppercase.contains("NO CARRIER") { return CallEndReason.remoteHangup.localizedDescription }
         return L10n.tr("模块未接受通话命令。")
     }
 
@@ -3151,7 +3156,7 @@ final class ModemService {
         case .empty:
             needsPostCallInitialization = true
             _ = finishConfirmedCallEnd(
-                reason: callSnapshot.lastEndReason ?? .unknown,
+                reason: callSnapshot.lastEndReason ?? .remoteHangup,
                 evidence: callSnapshot.lastEndEvidence ?? CallEndEvidence(source: .callListEmpty)
             )
         case let .unknown(error):
@@ -3857,7 +3862,7 @@ final class ModemService {
                 callPollMisses += 1
                 if callPollMisses >= 2 {
                     scheduleCallCleanup(
-                        reason: .unknown, evidence: CallEndEvidence(source: .callListEmpty)
+                        reason: .remoteHangup, evidence: CallEndEvidence(source: .callListEmpty)
                     )
                 }
             }

@@ -33,7 +33,7 @@ struct LocalCallAPITests {
         await testInFlightShutdownCancellation(clean: true)
         await testInFlightShutdownCancellation(clean: false)
         // End reasons describe observed evidence, not an inferred human action.
-        for (code, reason) in [("NO CARRIER", CallEndReason.unknown), ("BUSY", .busy),
+        for (code, reason) in [("NO CARRIER", CallEndReason.remoteHangup), ("BUSY", .busy),
                                ("NO ANSWER", .noAnswer), ("NO DIALTONE", .noDialTone),
                                ("NO DIAL TONE", .noDialTone)] {
             let events = CallATParser.parseEvents(inLine: code.lowercased())
@@ -42,25 +42,33 @@ struct LocalCallAPITests {
             call.recordEnd(reason, evidence: .modemResult(code))
             let status = LocalCallAPIStatus(call: call, isChangingCall: false)
             let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(status)) as! [String: Any]
-            expect(body["lastEndReason"] as? String == reason.rawValue, "API reason: \(code)")
+            expect(body["lastEndReason"] as? String == LocalCallAPIStatus.reportedReason(reason).rawValue,
+                   "API reason: \(code)")
+            if code == "NO CARRIER" {
+                expect(body["lastEndReason"] as? String == "unknown",
+                       "The API must not claim a remote hangup for NO CARRIER")
+            }
             let evidence = body["lastEndEvidence"] as! [String: Any]
             expect(evidence["source"] as? String == "modemResultCode", "API end source")
             expect(evidence["code"] as? String == code, "API raw result code")
         }
         var ended = CallSnapshot(phase: .idle)
         ended.recordEnd(.localHangup, evidence: CallEndEvidence(source: .localAction))
-        ended.recordEnd(.unknown, evidence: .modemResult("NO CARRIER"))
-        ended.recordEnd(.unknown, evidence: CallEndEvidence(source: .callListEmpty))
+        ended.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER"))
+        ended.recordEnd(.remoteHangup, evidence: CallEndEvidence(source: .callListEmpty))
         expect(ended.lastEndReason == .localHangup && ended.lastEndEvidence?.source == .localAction,
                "Late release indications overwrote the local hangup")
         ended.clearEnd()
-        ended.recordEnd(.unknown, evidence: CallEndEvidence(source: .callListEmpty))
-        expect(ended.lastEndReason == .unknown, "Empty CLCC falsely implies remote hangup")
-        ended.recordEnd(.unknown, evidence: .modemResult("NO CARRIER"))
-        ended.recordEnd(.unknown, evidence: CallEndEvidence(source: .callListEmpty))
+        ended.recordEnd(.remoteHangup, evidence: CallEndEvidence(source: .callListEmpty))
+        expect(ended.lastEndReason == .remoteHangup, "The app no longer reads an empty CLCC as the other side hanging up")
+        let emptyListStatus = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
+            LocalCallAPIStatus(call: ended, isChangingCall: false))) as! [String: Any]
+        expect(emptyListStatus["lastEndReason"] as? String == "unknown", "Empty CLCC falsely implies remote hangup in the API")
+        ended.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER"))
+        ended.recordEnd(.remoteHangup, evidence: CallEndEvidence(source: .callListEmpty))
         expect(ended.lastEndEvidence?.code == "NO CARRIER", "Lost the observed modem result")
         ended.recordEnd(.noAnswer, evidence: .modemResult("NO ANSWER"))
-        ended.recordEnd(.unknown, evidence: .modemResult("NO CARRIER"))
+        ended.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER"))
         expect(ended.lastEndReason == .noAnswer, "Generic release overwrote explicit NO ANSWER")
         ended.clearEnd()
         expect(ended.lastEndReason == nil && ended.lastEndEvidence == nil, "New call retained stale end data")

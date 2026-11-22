@@ -90,7 +90,10 @@ enum CallATParser {
             return [.connected]
         }
         switch uppercase {
-        case "NO CARRIER": return [.ended(.unknown, evidence: .modemResult(uppercase))]
+        // NO CARRIER carries no release cause. The app keeps calling it a
+        // remote hangup, as before; the local call API reports it as
+        // unknown, together with the evidence.
+        case "NO CARRIER": return [.ended(.remoteHangup, evidence: .modemResult(uppercase))]
         case "BUSY": return [.ended(.busy, evidence: .modemResult(uppercase))]
         case "NO ANSWER": return [.ended(.noAnswer, evidence: .modemResult(uppercase))]
         case "NO DIALTONE", "NO DIAL TONE": return [.ended(.noDialTone, evidence: .modemResult(uppercase))]

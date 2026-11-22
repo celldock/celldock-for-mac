@@ -78,6 +78,17 @@ struct CallEndEvidence: Codable, Equatable {
     static func modemResult(_ code: String) -> Self {
         Self(source: .modemResultCode, code: code)
     }
+
+    /// NO CARRIER or a call that vanished from CLCC: the call ended, but the
+    /// modem gave no cause. The app shows these as the other side hanging up,
+    /// as it always has; the local call API reports them as unknown.
+    var isGenericRelease: Bool {
+        switch source {
+        case .callListEmpty: return true
+        case .modemResultCode: return code == "NO CARRIER"
+        default: return false
+        }
+    }
 }
 
 struct UACMediaSnapshot: Equatable {
@@ -133,15 +144,22 @@ struct CallSnapshot: Equatable {
         )
     }
 
-    mutating func recordEnd(_ reason: CallEndReason, evidence: CallEndEvidence) {
+    /// Returns false when the indication was ignored in favour of a more
+    /// specific one already recorded.
+    @discardableResult
+    mutating func recordEnd(_ reason: CallEndReason, evidence: CallEndEvidence) -> Bool {
         // ATH can produce a delayed NO CARRIER after local cleanup completes.
-        if lastEndEvidence?.source == .localAction, evidence.source != .localAction { return }
-        if reason == .unknown {
-            if let previous = lastEndReason, previous != .unknown, previous != .failed { return }
-            if lastEndEvidence?.source == .modemResultCode, evidence.source == .callListEmpty { return }
+        if lastEndEvidence?.source == .localAction, evidence.source != .localAction { return false }
+        if evidence.isGenericRelease || reason == .unknown {
+            if let previous = lastEndReason, previous != .failed, previous != .unknown,
+               lastEndEvidence?.isGenericRelease != true {
+                return false
+            }
+            if lastEndEvidence?.source == .modemResultCode, evidence.source == .callListEmpty { return false }
         }
         lastEndReason = reason
         lastEndEvidence = evidence
+        return true
     }
 
     // Re-probing the same module after call cleanup must not erase the result

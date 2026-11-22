@@ -3,8 +3,8 @@ import Foundation
 func testEndEvidenceAfterInitialization() throws {
     let results: [(CallEndReason, CallEndEvidence)] = [
         (.localHangup, CallEndEvidence(source: .localAction)),
-        (.unknown, CallEndEvidence(source: .callListEmpty)),
-        (.unknown, .modemResult("NO CARRIER")),
+        (.remoteHangup, CallEndEvidence(source: .callListEmpty)),
+        (.remoteHangup, .modemResult("NO CARRIER")),
         (.noAnswer, .modemResult("NO ANSWER")),
         (.busy, .modemResult("BUSY")),
         (.failed, CallEndEvidence(source: .internalFailure)),
@@ -30,7 +30,7 @@ func testEndEvidenceAfterInitialization() throws {
                "Initialization retained active call/media state")
         let body = try JSONSerialization.jsonObject(with: JSONEncoder().encode(
             LocalCallAPIStatus(call: call, isChangingCall: false))) as! [String: Any]
-        expect(body["lastEndReason"] as? String == reason.rawValue,
+        expect(body["lastEndReason"] as? String == LocalCallAPIStatus.reportedReason(reason).rawValue,
                "API lost the end reason after recovery/retry")
         let encodedEvidence = body["lastEndEvidence"] as! [String: Any]
         expect(encodedEvidence["source"] as? String == evidence.source.rawValue &&

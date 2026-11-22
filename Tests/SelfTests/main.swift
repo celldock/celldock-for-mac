@@ -1295,6 +1295,60 @@ do {
         "call snapshot hid a real remote hang-up"
     )
 
+    // A generic release (NO CARRIER, or the call vanishing from CLCC) still
+    // reads as the other side hanging up in the app; review of #23.
+    var releasedCall = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
+    try expect(
+        releasedCall.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER")) &&
+            releasedCall.lastEndReason == .remoteHangup &&
+            releasedCall.lastEndReason?.localizedDescription == L10n.tr("对方已挂断"),
+        "an ordinary remote hang-up no longer shows that the other side hung up"
+    )
+    try expect(
+        !releasedCall.recordEnd(.remoteHangup, evidence: CallEndEvidence(source: .callListEmpty)) &&
+            releasedCall.lastEndEvidence?.code == "NO CARRIER",
+        "an empty CLCC replaced the modem's own NO CARRIER"
+    )
+    var busyCall = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
+    busyCall.recordEnd(.busy, evidence: .modemResult("BUSY"))
+    try expect(
+        !busyCall.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER")) &&
+            busyCall.lastEndReason == .busy,
+        "a generic release overwrote an explicit BUSY"
+    )
+    var hungUpLocally = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
+    hungUpLocally.recordEnd(.localHangup, evidence: CallEndEvidence(source: .localAction))
+    try expect(
+        !hungUpLocally.recordEnd(.remoteHangup, evidence: .modemResult("NO CARRIER")) &&
+            hungUpLocally.lastEndReason == .localHangup,
+        "a late NO CARRIER overwrote a local hang-up"
+    )
+    try expect(
+        CallEndEvidence.modemResult("NO CARRIER").isGenericRelease &&
+            CallEndEvidence(source: .callListEmpty).isGenericRelease &&
+            !CallEndEvidence.modemResult("BUSY").isGenericRelease &&
+            !CallEndEvidence(source: .localAction).isGenericRelease,
+        "generic call releases were classified incorrectly"
+    )
+
+    // A missed incoming call released by the network keeps that reason in the
+    // history and is still listed as missed.
+    let releasedMissedCall = CallHistoryRecord(
+        id: UUID(),
+        direction: .incoming,
+        number: "13800000000",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        connectedAt: nil,
+        endedAt: Date(timeIntervalSince1970: 1_010),
+        endReason: releasedCall.lastEndReason,
+        recordingID: nil,
+        missedCallAcknowledged: false
+    )
+    try expect(
+        releasedMissedCall.isMissed && releasedMissedCall.endReason == .remoteHangup,
+        "a missed call released by the other side lost its reason or its missed state"
+    )
+
     let verificationSuiteName = "CellDockSelfTests.VoiceVerification.\(UUID().uuidString)"
     guard let verificationDefaults = UserDefaults(suiteName: verificationSuiteName) else {
         throw SelfTestFailure.failed("could not create an isolated defaults suite")
@@ -1637,7 +1691,7 @@ do {
     )
     try expect(
         callFramer.consume("RING\r\nNO CARRIER\r\n") == [
-            .ring, .ended(.unknown, evidence: .modemResult("NO CARRIER"))
+            .ring, .ended(.remoteHangup, evidence: .modemResult("NO CARRIER"))
         ],
         "call terminal URCs"
     )
