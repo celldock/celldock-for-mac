@@ -33,6 +33,8 @@ struct SIMManagementView: View {
     @State private var copiedField: String?
     @State private var pendingIncomingCallsEnabled: Bool?
     @State private var pendingVoiceCallsEnabled: Bool?
+    /// `SIMPhoneNumberPresentation.revealKey` of the number shown in full.
+    @State private var revealedPhoneNumberKey: String?
     @State private var pendingSIMSlot: Int?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
@@ -1103,9 +1105,12 @@ struct SIMManagementView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selectedModule?.carrierName ?? L10n.tr("运营商未识别"))
                         .font(.appHeadline)
-                    Text(displayedPhoneNumber)
-                        .font(.appCallout.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text(displayedPhoneNumber)
+                            .font(.appCallout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        phoneNumberActions
+                    }
                 }
 
                 Spacer(minLength: 20)
@@ -1742,7 +1747,7 @@ struct SIMManagementView: View {
 
     private var basicInformationCard: some View {
         VStack(spacing: 0) {
-            informationRow(title: "电话号码", value: displayedPhoneNumber)
+            phoneNumberRow
             Divider()
             informationRow(title: "运营商", value: selectedModem.operatorName ?? L10n.tr("尚未读取"))
             Divider()
@@ -1909,9 +1914,85 @@ struct SIMManagementView: View {
         if appState.isPresentationPrivacyEnabled {
             return L10n.tr("本机号码已隐藏")
         }
-        let digits = number.filter { $0 >= "0" && $0 <= "9" }
-        guard digits.count >= 7 else { return number }
-        return "\(digits.prefix(3)) •••• \(digits.suffix(4))"
+        return isPhoneNumberRevealed ? number : SIMPhoneNumberPresentation.masked(number)
+    }
+
+    private var phoneNumberRevealKey: String? {
+        SIMPhoneNumberPresentation.revealKey(
+            moduleID: selectedModuleID?.rawValue,
+            number: selectedModem.simPhoneNumber
+        )
+    }
+
+    /// Presentation privacy always wins over a reveal made before it was
+    /// switched on.
+    private var isPhoneNumberRevealed: Bool {
+        guard !appState.isPresentationPrivacyEnabled,
+              let key = phoneNumberRevealKey else {
+            return false
+        }
+        return revealedPhoneNumberKey == key
+    }
+
+    /// The eye and copy buttons that go with the SIM's own number.
+    private var phoneNumberActions: some View {
+        let number = selectedModem.simPhoneNumber
+        let isUnavailable = number == nil || appState.isPresentationPrivacyEnabled
+        let tint = isUnavailable ? Color.secondary.opacity(0.45) : Color.secondary
+        return HStack(spacing: 8) {
+            Button {
+                revealedPhoneNumberKey = isPhoneNumberRevealed ? nil : phoneNumberRevealKey
+            } label: {
+                Image(systemName: isPhoneNumberRevealed ? "eye.slash" : "eye")
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(isUnavailable)
+            .help(phoneNumberRevealHelp)
+            .accessibilityLabel(phoneNumberRevealHelp)
+            .accessibilityIdentifier("SIMManagementPhoneNumberRevealButton")
+
+            Button {
+                guard let number else { return }
+                copy(number, field: "电话号码")
+            } label: {
+                Image(systemName: copiedField == "电话号码" ? "checkmark" : "doc.on.doc")
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(isUnavailable)
+            .help(identifierCopyHelp(title: "电话号码", value: number))
+            .accessibilityLabel(identifierCopyHelp(title: "电话号码", value: number))
+            .accessibilityIdentifier("SIMManagementPhoneNumberCopyButton")
+        }
+    }
+
+    private var phoneNumberRevealHelp: String {
+        if selectedModem.simPhoneNumber == nil {
+            return L10n.tr("%@尚未读取", L10n.tr("电话号码"))
+        }
+        if appState.isPresentationPrivacyEnabled {
+            return L10n.tr("关闭演示隐私保护后可显示完整号码")
+        }
+        return isPhoneNumberRevealed ? L10n.tr("隐藏完整号码") : L10n.tr("显示完整号码")
+    }
+
+    private var phoneNumberRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(L10n.tr("电话号码"))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 20)
+            Text(displayedPhoneNumber)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+            phoneNumberActions
+        }
+        .font(.appCallout)
+        .padding(.vertical, 9)
     }
 
     private var sidebarSIMTitle: String {

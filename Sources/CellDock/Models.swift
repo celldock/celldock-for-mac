@@ -154,6 +154,25 @@ struct VoiceCapabilityVerificationStore {
     }
 }
 
+/// How the SIM's own number is shown on the SIM page.
+enum SIMPhoneNumberPresentation {
+    /// "861 •••• 3173": enough to recognize the line, not enough to read the
+    /// number off a shared screen. Numbers too short to mask are left as is.
+    static func masked(_ number: String) -> String {
+        let digits = number.filter { $0 >= "0" && $0 <= "9" }
+        guard digits.count >= 7 else { return number }
+        return "\(digits.prefix(3)) •••• \(digits.suffix(4))"
+    }
+
+    /// What a reveal belongs to: one number on one module. Selecting another
+    /// module, or the SIM reporting another number, no longer matches the
+    /// key that was revealed, so the new number starts out masked.
+    static func revealKey(moduleID: String?, number: String?) -> String? {
+        guard let number, !number.isEmpty else { return nil }
+        return "\(moduleID ?? "")|\(number)"
+    }
+}
+
 /// AT+QCALLCFG="voice_disable" on data-only Quectel modules. Two of its four
 /// values are understood: 1, which the RM520N-GL ships with and which makes
 /// every ATD answer NO CARRIER, and 2, which Quectel support gives for

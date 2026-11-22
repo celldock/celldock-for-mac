@@ -2545,6 +2545,33 @@ do {
         VoiceCallSwitchPolicy.setting(enabled: true) == 2 && VoiceCallSwitchPolicy.setting(enabled: false) == 1,
         "the firmware voice switch would write a value other than the two that are understood"
     )
+    try expect(
+        SIMPhoneNumberPresentation.masked("+8613800138000") == "861 •••• 8000" &&
+            SIMPhoneNumberPresentation.masked("13800138000") == "138 •••• 8000",
+        "the SIM's own number was not masked to its first three and last four digits"
+    )
+    try expect(
+        SIMPhoneNumberPresentation.masked("10086") == "10086" &&
+            SIMPhoneNumberPresentation.masked("+1 (555) 01") == "+1 (555) 01",
+        "a number too short to mask was altered"
+    )
+    try expect(
+        SIMPhoneNumberPresentation.revealKey(moduleID: "usb-location:00200000", number: "+8613800138000")
+            == "usb-location:00200000|+8613800138000",
+        "a revealed number was not tied to its module and number"
+    )
+    try expect(
+        SIMPhoneNumberPresentation.revealKey(moduleID: "a", number: "+8613800138000")
+            != SIMPhoneNumberPresentation.revealKey(moduleID: "b", number: "+8613800138000") &&
+            SIMPhoneNumberPresentation.revealKey(moduleID: "a", number: "+8613800138000")
+            != SIMPhoneNumberPresentation.revealKey(moduleID: "a", number: "+8613800138001"),
+        "revealing one number would also reveal another module's or another SIM's number"
+    )
+    try expect(
+        SIMPhoneNumberPresentation.revealKey(moduleID: "a", number: nil) == nil &&
+            SIMPhoneNumberPresentation.revealKey(moduleID: "a", number: "") == nil,
+        "a SIM without a readable number had something to reveal"
+    )
     var voiceSwitchModem = ModemSnapshot(state: .connected, simState: .ready)
     try expect(voiceSwitchModem.firmwareVoiceCallsEnabled == nil, "a module without the switch offered it")
     voiceSwitchModem.voiceDisableSetting = 1

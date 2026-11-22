@@ -1837,3 +1837,6 @@
 "语音通话设置写入后的回读校验失败，未重启模块。" = "Échec de la relecture après écriture du réglage des appels vocaux. Le module n’a pas redémarré.";
 "通话或语音清理期间不能切换语音通话设置。" = "Impossible de modifier les réglages des appels vocaux pendant un appel ou le nettoyage audio.";
 "重启并切换" = "Redémarrer et basculer";
+"关闭演示隐私保护后可显示完整号码" = "Désactivez la protection de la confidentialité de la démo pour afficher le numéro complet";
+"显示完整号码" = "Afficher le numéro complet";
+"隐藏完整号码" = "Masquer le numéro complet";

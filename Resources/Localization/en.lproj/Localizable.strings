@@ -1840,3 +1840,6 @@
 "语音通话设置写入后的回读校验失败，未重启模块。" = "The readback verification after writing the voice call setting failed and the module was not restarted.";
 "通话或语音清理期间不能切换语音通话设置。" = "Voice call settings cannot be changed during a call or voice cleanup.";
 "重启并切换" = "Restart and Switch";
+"关闭演示隐私保护后可显示完整号码" = "Turn off Presentation Privacy to show the full number";
+"显示完整号码" = "Show Full Number";
+"隐藏完整号码" = "Hide Full Number";
