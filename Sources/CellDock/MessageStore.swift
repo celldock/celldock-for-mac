@@ -142,6 +142,16 @@ final class MessageStore: ObservableObject {
         if changed { save() }
     }
 
+    /// Removes several messages with one save. They are remembered as
+    /// deleted so a later poll of the module does not bring them back.
+    func remove(ids: Set<SMSMessage.ID>, at date: Date = Date()) {
+        guard !ids.isEmpty else { return }
+        for id in ids { deletedMessages.insert(id, at: date) }
+        let originalCount = messages.count
+        messages.removeAll { ids.contains($0.id) }
+        if messages.count != originalCount { save() }
+    }
+
     func remove(id: SMSMessage.ID, at date: Date = Date()) {
         deletedMessages.insert(id, at: date)
         let originalCount = messages.count

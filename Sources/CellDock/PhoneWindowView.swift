@@ -156,6 +156,9 @@ struct CommunicationModuleStatusMenu: View {
     @EnvironmentObject private var appState: AppState
     @State private var isPopoverPresented = false
     @State private var showsOfflineLines = false
+    @State private var renamingLine: CommunicationLine?
+    @State private var renameText = ""
+    @State private var removingLine: CommunicationLine?
 
     let openSIMManagement: () -> Void
 
@@ -215,7 +218,57 @@ struct CommunicationModuleStatusMenu: View {
             popoverContent
         }
         .onChange(of: isPopoverPresented) { _, presented in
-            if presented { showsOfflineLines = isViewingOffline }
+            guard presented else { return }
+            // History may name modules this Mac has not catalogued yet.
+            appState.refreshModuleAppearanceRegistry()
+            showsOfflineLines = isViewingOffline
+        }
+        // Both dialogs belong to the window, not the popover: the popover
+        // closes as soon as a dialog takes focus and would take them with it.
+        .alert(
+            L10n.tr("重命名线路"),
+            isPresented: Binding(
+                get: { renamingLine != nil },
+                set: { if !$0 { renamingLine = nil } }
+            )
+        ) {
+            TextField(L10n.tr("线路名称"), text: $renameText)
+            Button(L10n.tr("取消"), role: .cancel) {}
+            Button(L10n.tr("保存")) {
+                if let renamingLine {
+                    appState.renameLine(renamingLine, to: renameText)
+                }
+            }
+        } message: {
+            Text(L10n.tr("留空将恢复默认名称。"))
+        }
+        .confirmationDialog(
+            L10n.tr(
+                "移除“%@”的记录？",
+                removingLine.map { appState.lineAppearanceResolver.appearance(for: $0).title } ?? ""
+            ),
+            isPresented: Binding(
+                get: { removingLine != nil },
+                set: { if !$0 { removingLine = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(L10n.tr("移除记录"), role: .destructive) {
+                if let removingLine {
+                    appState.removeRecords(ofOfflineLine: removingLine)
+                }
+            }
+            Button(L10n.tr("取消"), role: .cancel) {}
+        } message: {
+            Text(L10n.tr(
+                "将删除这条线路的 %lld 条短信和 %lld 条通话记录，无法恢复。通话录音不会被删除。",
+                Int64(removingLine.map { line in
+                    appState.messages.filter { $0.line == line }.count
+                } ?? 0),
+                Int64(removingLine.map { line in
+                    appState.callHistory.records.filter { $0.line == line }.count
+                } ?? 0)
+            ))
         }
         .help(statusDescription)
         .accessibilityLabel(L10n.tr("蜂窝设备：%@", statusDescription))
@@ -326,6 +379,7 @@ struct CommunicationModuleStatusMenu: View {
         appearance: LineAppearance,
         title: String,
         detail: String,
+        secondDetail: String? = nil,
         attention: Int,
         isSelected: Bool,
         trailingStatus: String? = nil,
@@ -347,7 +401,16 @@ struct CommunicationModuleStatusMenu: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+
+                    if let secondDetail {
+                        Text(verbatim: secondDetail)
+                            .font(.appCaption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+                .padding(.vertical, 6)
 
                 Spacer(minLength: 8)
 
@@ -400,17 +463,73 @@ struct CommunicationModuleStatusMenu: View {
     private func offlineLineRow(_ line: CommunicationLine, scope: LineScope) -> some View {
         let appearance = scope.resolver.appearance(for: line)
         let rowScope = LineScope(resolver: scope.resolver, line: line, isOnline: false)
+        let status = appearance.isAttached ? L10n.tr("卡槽未启用") : L10n.tr("模组已拔出")
         return lineRow(
             appearance: appearance,
             title: appearance.title,
-            detail: appearance.isAttached ? L10n.tr("卡槽未启用") : L10n.tr("模组已拔出"),
+            detail: [status, appearance.carrier, appearance.identityDetail]
+                .compactMap { $0 }
+                .joined(separator: " · "),
+            secondDetail: usageSummary(of: line),
             attention: appState.attentionCount(in: rowScope),
             isSelected: !scope.isOnline && scope.line == line
         ) {
             appState.viewOfflineLine(line)
             isPopoverPresented = false
         }
+        .contextMenu {
+            Button(L10n.tr("重命名…"), systemImage: "pencil") {
+                beginRename(line)
+            }
+            Divider()
+            Button(L10n.tr("移除…"), systemImage: "trash", role: .destructive) {
+                beginRemoval(line)
+            }
+        }
         .accessibilityLabel(appearance.title)
+    }
+
+    /// What an offline line was used for, so lines that share a default name
+    /// can still be told apart: who it last reached, when, and how much.
+    private func usageSummary(of line: CommunicationLine) -> String? {
+        let messages = appState.messages.filter { $0.line == line }
+        let calls = appState.callHistory.records.filter { $0.line == line }
+        let latestMessage = messages.max { $0.timestamp < $1.timestamp }
+        let latestCall = calls.max { $0.startedAt < $1.startedAt }
+        var latest: (date: Date, address: String)?
+        if let latestMessage {
+            latest = (latestMessage.timestamp, latestMessage.peerAddress)
+        }
+        if let latestCall, latestCall.startedAt > (latest?.date ?? .distantPast) {
+            latest = (latestCall.startedAt, latestCall.number)
+        }
+        var parts: [String] = []
+        if let latest {
+            let name = appState.privacyPresentation.identity(
+                contactName: SystemContactStore.shared.displayName(for: latest.address),
+                number: latest.address
+            )
+            parts.append(L10n.tr("最近：%@", name))
+            parts.append(CommunicationUI.listTimestamp(latest.date))
+        }
+        if !messages.isEmpty {
+            parts.append(L10n.tr("%lld 条短信", Int64(messages.count)))
+        }
+        if !calls.isEmpty {
+            parts.append(L10n.tr("%lld 通电话", Int64(calls.count)))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private func beginRename(_ line: CommunicationLine) {
+        renameText = appState.moduleAppearanceRegistry.slotInfo(for: line)?.customName ?? ""
+        isPopoverPresented = false
+        DispatchQueue.main.async { renamingLine = line }
+    }
+
+    private func beginRemoval(_ line: CommunicationLine) {
+        isPopoverPresented = false
+        DispatchQueue.main.async { removingLine = line }
     }
 
     private var offlineLines: [CommunicationLine] {

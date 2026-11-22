@@ -141,6 +141,12 @@ final class CallHistoryStore: ObservableObject {
         save()
     }
 
+    func delete(ids: Set<CallHistoryRecord.ID>) {
+        guard !ids.isEmpty else { return }
+        records.removeAll { ids.contains($0.id) }
+        save()
+    }
+
     func deleteAll() {
         records.removeAll()
         save()

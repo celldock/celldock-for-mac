@@ -27,18 +27,47 @@ final class AppState: ObservableObject {
     /// its line badge after a module is unplugged.
     @Published private(set) var moduleAppearanceRegistry = ModuleAppearanceRegistry.load()
 
-    private func refreshModuleAppearanceRegistry() {
+    func refreshModuleAppearanceRegistry() {
         let attached = cellularModules.enumerated().map { index, module in
             ModuleAppearanceRegistry.AttachedModule(
                 id: module.id,
                 number: index + 1,
-                imei: module.modem.moduleIMEI
+                imei: module.modem.moduleIMEI,
+                model: module.modem.usbProductName,
+                simSlot: module.modem.simSlotSwitchingSupported ? module.modem.simSlot : nil,
+                carrier: module.modem.simReady ? module.modem.operatorName : nil,
+                simSuffix: module.modem.simReady ? module.simSuffix : nil
             )
         }
         var registry = moduleAppearanceRegistry
-        guard registry.update(attached: attached) else { return }
+        guard registry.update(
+            attached: attached,
+            history: Array(Set(recordedLines.map(\.moduleID)))
+        ) else { return }
         moduleAppearanceRegistry = registry
         registry.save()
+    }
+
+    /// Names an offline line; an empty name restores the default.
+    func renameLine(_ line: CommunicationLine, to name: String) {
+        var registry = moduleAppearanceRegistry
+        registry.rename(line, to: name)
+        guard registry != moduleAppearanceRegistry else { return }
+        moduleAppearanceRegistry = registry
+        registry.save()
+    }
+
+    /// Deletes the messages and call records of an offline line. Recordings
+    /// keep their audio and only stop naming the line.
+    func removeRecords(ofOfflineLine line: CommunicationLine) {
+        guard !lineAppearanceResolver.isOnline(line) else { return }
+        let title = lineAppearanceResolver.appearance(for: line).title
+        messageStore.remove(ids: Set(messages.filter { $0.line == line }.map(\.id)))
+        messages = messageStore.messages
+        callHistory.delete(ids: Set(callHistory.records.filter { $0.line == line }.map(\.id)))
+        callRecordings.forgetLine(moduleID: line.moduleID, simSlot: line.simSlot)
+        if viewedOfflineLine == line { viewedOfflineLine = nil }
+        presentTransientMessage(L10n.tr("已移除“%@”的记录。", title))
     }
 
     /// An offline line picked for read-only viewing; nil follows the current module.

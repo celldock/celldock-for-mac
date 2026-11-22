@@ -21,6 +21,13 @@ enum LineBadgeText {
         guard let simSlot else { return String(moduleNumber) }
         return "\(moduleNumber)·\(simSlot)"
     }
+
+    /// "A" for an unplugged module, "A·2" for its second SIM slot. Unplugged
+    /// modules use a letter because numbers move to whatever is attached now.
+    static func text(offlineLabel: String, simSlot: Int?) -> String {
+        guard let simSlot else { return offlineLabel }
+        return "\(offlineLabel)·\(simSlot)"
+    }
 }
 
 /// Remembers the colour and number of every module this Mac has seen.
@@ -30,21 +37,44 @@ enum LineBadgeText {
 /// unplugged, and a module's colour would follow its position in the list
 /// instead of the module itself.
 struct ModuleAppearanceRegistry: Codable, Equatable {
+    /// What is known about the SIM in one slot, kept for when it goes offline.
+    struct SlotInfo: Codable, Equatable {
+        var carrier: String?
+        /// Last four digits of the SIM's ICCID.
+        var simSuffix: String?
+        /// The name the user gave this line.
+        var customName: String?
+    }
+
     struct Entry: Codable, Equatable {
+        /// Negative while the module is only known from history.
         var colorIndex: Int
-        /// The "模组 N" number the module had when it was last attached.
+        /// The "模组 N" number the module had when it was last attached; 0 if
+        /// this Mac has not seen it attached since the registry exists.
         var number: Int
         var imei: String?
+        /// The letter on the module's badge while it is unplugged. It never
+        /// changes, so two unplugged modules can always be told apart.
+        var offlineLabel: String? = nil
+        /// USB product name, such as "RM520N-GL".
+        var model: String? = nil
+        /// Keyed by SIM slot, or `singleSlotKey` for single-slot modules.
+        var slots: [String: SlotInfo]? = nil
     }
 
     struct AttachedModule: Equatable {
         let id: CellularModuleID
         let number: Int
         let imei: String?
+        var model: String? = nil
+        var simSlot: Int? = nil
+        var carrier: String? = nil
+        var simSuffix: String? = nil
     }
 
     static let colorCount = 6
     static let defaultsKey = "CellDock.ModuleAppearanceRegistry.v1"
+    static let singleSlotKey = "-"
 
     private(set) var entries: [String: Entry] = [:]
 
@@ -52,15 +82,29 @@ struct ModuleAppearanceRegistry: Codable, Equatable {
         entries[moduleID.rawValue]
     }
 
-    /// Records the attached modules. Returns true when anything changed.
+    func slotInfo(for line: CommunicationLine) -> SlotInfo? {
+        entries[line.moduleID.rawValue]?.slots?[Self.slotKey(line.simSlot)]
+    }
+
+    /// Records the attached modules, and makes sure every module that only
+    /// appears in history is known too. Returns true when anything changed.
     @discardableResult
-    mutating func update(attached: [AttachedModule]) -> Bool {
+    mutating func update(
+        attached: [AttachedModule],
+        history: [CellularModuleID] = []
+    ) -> Bool {
         let before = entries
         for module in attached {
             let key = module.id.rawValue
-            let imei = module.imei.flatMap { $0.isEmpty ? nil : $0 }
-            if var entry = entries[key] {
+            let imei = Self.nonEmpty(module.imei)
+            var entry: Entry
+            if let existing = entries[key] {
+                entry = existing
                 entry.number = module.number
+                if entry.colorIndex < 0 {
+                    entry.colorIndex = imei.flatMap { colorIndex(forIMEI: $0, excluding: key) }
+                        ?? nextFreeColorIndex()
+                }
                 if let imei, entry.imei != imei {
                     // The IMEI is read over AT after the module shows up. If the
                     // same module was seen on another port before, keep its colour.
@@ -70,32 +114,90 @@ struct ModuleAppearanceRegistry: Codable, Equatable {
                     }
                     entry.imei = imei
                 }
-                entries[key] = entry
             } else {
                 let known = imei.flatMap { colorIndex(forIMEI: $0, excluding: key) }
-                entries[key] = Entry(
+                entry = Entry(
                     colorIndex: known ?? nextFreeColorIndex(),
                     number: module.number,
                     imei: imei
                 )
             }
+            if let model = Self.nonEmpty(module.model) { entry.model = model }
+            let carrier = Self.nonEmpty(module.carrier)
+            let simSuffix = Self.nonEmpty(module.simSuffix)
+            if carrier != nil || simSuffix != nil {
+                let slotKey = Self.slotKey(module.simSlot)
+                var slot = entry.slots?[slotKey] ?? SlotInfo()
+                // A different SIM in the slot starts a fresh description.
+                if let simSuffix, slot.simSuffix != nil, slot.simSuffix != simSuffix {
+                    slot.carrier = nil
+                }
+                if let carrier { slot.carrier = carrier }
+                if let simSuffix { slot.simSuffix = simSuffix }
+                entry.slots = (entry.slots ?? [:]).merging([slotKey: slot]) { $1 }
+            }
+            entries[key] = entry
+            assignOfflineLabel(to: key)
+        }
+        for moduleID in history where entries[moduleID.rawValue] == nil {
+            entries[moduleID.rawValue] = Entry(colorIndex: -1, number: 0, imei: nil)
+        }
+        for key in entries.keys.sorted() where entries[key]?.offlineLabel == nil {
+            assignOfflineLabel(to: key)
         }
         return entries != before
     }
 
+    /// Names a line, or clears the name when `name` is empty.
+    mutating func rename(_ line: CommunicationLine, to name: String) {
+        let key = line.moduleID.rawValue
+        var entry = entries[key] ?? Entry(colorIndex: -1, number: 0, imei: nil)
+        let slotKey = Self.slotKey(line.simSlot)
+        var slot = entry.slots?[slotKey] ?? SlotInfo()
+        slot.customName = Self.nonEmpty(name)
+        entry.slots = (entry.slots ?? [:]).merging([slotKey: slot]) { $1 }
+        entries[key] = entry
+        assignOfflineLabel(to: key)
+    }
+
+    private mutating func assignOfflineLabel(to key: String) {
+        guard entries[key]?.offlineLabel == nil else { return }
+        let used = Set(entries.values.compactMap(\.offlineLabel))
+        var index = 0
+        while true {
+            let letter = String(UnicodeScalar(UInt8(65 + index % 26)))
+            let label = index < 26 ? letter : letter + String(index / 26)
+            if !used.contains(label) {
+                entries[key]?.offlineLabel = label
+                return
+            }
+            index += 1
+        }
+    }
+
+    private static func slotKey(_ simSlot: Int?) -> String {
+        simSlot.map(String.init) ?? singleSlotKey
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        return trimmed
+    }
+
     private func colorIndex(forIMEI imei: String, excluding key: String) -> Int? {
         entries
-            .filter { $0.key != key && $0.value.imei == imei }
+            .filter { $0.key != key && $0.value.imei == imei && $0.value.colorIndex >= 0 }
             .map(\.value.colorIndex)
             .min()
     }
 
     private func nextFreeColorIndex() -> Int {
-        let used = Set(entries.values.map(\.colorIndex))
+        let used = Set(entries.values.map(\.colorIndex).filter { $0 >= 0 })
         if let free = (0 ..< Self.colorCount).first(where: { !used.contains($0) }) {
             return free
         }
-        return entries.count % Self.colorCount
+        return used.count % Self.colorCount
     }
 
     static func load(defaults: UserDefaults = .standard) -> ModuleAppearanceRegistry {
@@ -127,8 +229,10 @@ struct LineAppearance: Equatable, Identifiable {
     let isLive: Bool
     /// "模组 2 · 卡 1"
     let title: String
-    /// Carrier of the line while its SIM is the active one.
+    /// Carrier of the line: live while its SIM is active, remembered otherwise.
     let carrier: String?
+    /// What else is known about an offline line, such as "尾号 0937".
+    var identityDetail: String? = nil
 
     var id: String {
         guard let line else { return "unknown" }
@@ -185,31 +289,41 @@ struct LineAppearanceResolver {
             )
         }
         let line = CommunicationLine(moduleID: moduleID, simSlot: simSlot)
+        let entry = registry.entry(for: moduleID)
+        let slot = registry.slotInfo(for: line)
+        let simDetail = slot?.simSuffix.map { L10n.tr("尾号 %@", $0) }
         if let index = attachedIndex(for: moduleID) {
             let module = modules[index]
             let number = index + 1
             let slotIsLive = simSlot == nil ||
                 !module.modem.simSlotSwitchingSupported ||
                 module.modem.simSlot == simSlot
+            let defaultTitle = Self.title(moduleNumber: number, simSlot: simSlot)
             return LineAppearance(
                 line: line,
                 badgeText: LineBadgeText.text(moduleNumber: number, simSlot: simSlot),
                 colorIndex: registry.entry(for: module.id)?.colorIndex ?? index,
                 attachedModuleID: module.id,
                 isLive: slotIsLive && module.isCommunicationEligible,
-                title: Self.title(moduleNumber: number, simSlot: simSlot),
-                carrier: slotIsLive && module.modem.simReady ? module.carrierName : nil
+                // A name the user gave the line only replaces the default
+                // while the line is offline; a live line keeps its number.
+                title: slotIsLive ? defaultTitle : (slot?.customName ?? defaultTitle),
+                carrier: slotIsLive
+                    ? (module.modem.simReady ? module.carrierName : nil)
+                    : slot?.carrier,
+                identityDetail: slotIsLive ? nil : simDetail
             )
         }
-        if let entry = registry.entry(for: moduleID) {
+        if let entry, let label = entry.offlineLabel {
             return LineAppearance(
                 line: line,
-                badgeText: LineBadgeText.text(moduleNumber: entry.number, simSlot: simSlot),
+                badgeText: LineBadgeText.text(offlineLabel: label, simSlot: simSlot),
                 colorIndex: nil,
                 attachedModuleID: nil,
                 isLive: false,
-                title: Self.title(moduleNumber: entry.number, simSlot: simSlot),
-                carrier: nil
+                title: slot?.customName ?? entry.model ?? L10n.tr("已移除的模组"),
+                carrier: slot?.carrier,
+                identityDetail: simDetail
             )
         }
         return LineAppearance(
@@ -218,7 +332,7 @@ struct LineAppearanceResolver {
             colorIndex: nil,
             attachedModuleID: nil,
             isLive: false,
-            title: L10n.tr("已移除的模组"),
+            title: slot?.customName ?? L10n.tr("已移除的模组"),
             carrier: nil
         )
     }

@@ -1790,3 +1790,15 @@
 "卡槽未启用" = "SIM Slot Not Active";
 "模组已拔出" = "Module Unplugged";
 "%@ · 离线，仅查看" = "%@ · Offline, View Only";
+"重命名…" = "Rename…";
+"移除…" = "Remove…";
+"重命名线路" = "Rename Line";
+"线路名称" = "Line Name";
+"留空将恢复默认名称。" = "Leave empty to restore the default name.";
+"移除“%@”的记录？" = "Remove the records of “%@”?";
+"移除记录" = "Remove Records";
+"将删除这条线路的 %lld 条短信和 %lld 条通话记录，无法恢复。通话录音不会被删除。" = "This deletes %lld messages and %lld call records of this line and cannot be undone. Call recordings are kept.";
+"已移除“%@”的记录。" = "Removed the records of “%@”.";
+"最近：%@" = "Latest: %@";
+"%lld 条短信" = "%lld messages";
+"%lld 通电话" = "%lld calls";

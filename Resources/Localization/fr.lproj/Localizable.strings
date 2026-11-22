@@ -1787,3 +1787,15 @@
 "卡槽未启用" = "Emplacement SIM inactif";
 "模组已拔出" = "Module débranché";
 "%@ · 离线，仅查看" = "%@ · Hors ligne, lecture seule";
+"重命名…" = "Renommer…";
+"移除…" = "Supprimer…";
+"重命名线路" = "Renommer la ligne";
+"线路名称" = "Nom de la ligne";
+"留空将恢复默认名称。" = "Laissez vide pour rétablir le nom par défaut.";
+"移除“%@”的记录？" = "Supprimer les enregistrements de « %@ » ?";
+"移除记录" = "Supprimer les enregistrements";
+"将删除这条线路的 %lld 条短信和 %lld 条通话记录，无法恢复。通话录音不会被删除。" = "Cela supprime %lld messages et %lld appels de cette ligne, de façon irréversible. Les enregistrements audio sont conservés.";
+"已移除“%@”的记录。" = "Enregistrements de « %@ » supprimés.";
+"最近：%@" = "Dernier : %@";
+"%lld 条短信" = "%lld messages";
+"%lld 通电话" = "%lld appels";

@@ -246,6 +246,19 @@ final class CallRecordingStore: ObservableObject {
         save()
     }
 
+    /// Detaches recordings from a line whose history is being removed. The
+    /// audio stays; the recordings just no longer name that line.
+    func forgetLine(moduleID: CellularModuleID, simSlot: Int?) {
+        var changed = false
+        for index in records.indices
+        where records[index].moduleID == moduleID && records[index].simSlot == simSlot {
+            records[index].moduleID = nil
+            records[index].simSlot = nil
+            changed = true
+        }
+        if changed { save() }
+    }
+
     func delete(_ record: CallRecordingRecord) {
         if playingRecordingID == record.id { stopPlayback() }
         try? FileManager.default.removeItem(at: fileURL(for: record))

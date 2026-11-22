@@ -695,15 +695,87 @@ do {
             lineResolver.appearance(moduleID: movedPort, simSlot: nil).badgeText == nil,
         "a record without a known module was given a badge"
     )
+    let slotNamed = CommunicationLine(moduleID: secondSIM, simSlot: 2)
     let unpluggedResolver = LineAppearanceResolver(
         modules: [lineModule(secondSIM, number: 1, carrier: "中国电信", slot: 1)],
         registry: lineRegistry
     )
     let unplugged = unpluggedResolver.appearance(moduleID: firstSIM, simSlot: nil)
     try expect(
-        unplugged.badgeText == "1" && unplugged.colorIndex == nil && !unplugged.isAttached &&
+        unplugged.badgeText == "A" && unplugged.colorIndex == nil && !unplugged.isAttached &&
             !unplugged.isLive,
         "history of an unplugged module lost its badge or stayed coloured"
+    )
+
+    // MARK: Telling offline lines apart
+
+    var identityRegistry = ModuleAppearanceRegistry()
+    identityRegistry.update(
+        attached: [
+            .init(
+                id: firstSIM, number: 1, imei: "860000000000001",
+                model: "RM520N-GL", simSlot: 1, carrier: "中国电信", simSuffix: "0937"
+            ),
+        ],
+        history: [firstSIM, secondSIM, movedPort]
+    )
+    try expect(
+        identityRegistry.entry(for: firstSIM)?.offlineLabel == "A" &&
+            Set([secondSIM, movedPort].compactMap { identityRegistry.entry(for: $0)?.offlineLabel }) == ["B", "C"] &&
+            identityRegistry.entry(for: secondSIM)?.colorIndex == -1,
+        "modules known only from history did not get their own stable letters"
+    )
+    let labelsBefore = [firstSIM, secondSIM, movedPort].map { identityRegistry.entry(for: $0)?.offlineLabel }
+    identityRegistry.update(
+        attached: [.init(id: secondSIM, number: 1, imei: nil)],
+        history: [firstSIM, secondSIM, movedPort]
+    )
+    try expect(
+        [firstSIM, secondSIM, movedPort].map { identityRegistry.entry(for: $0)?.offlineLabel } == labelsBefore &&
+            identityRegistry.entry(for: secondSIM)?.colorIndex == 1,
+        "a module's letter changed, or a module from history got no colour when attached"
+    )
+    let identityResolver = LineAppearanceResolver(modules: [], registry: identityRegistry)
+    let rememberedSlot = identityResolver.appearance(moduleID: firstSIM, simSlot: 1)
+    try expect(
+        rememberedSlot.badgeText == "A·1" && rememberedSlot.title == "RM520N-GL" &&
+            rememberedSlot.carrier == "中国电信" && rememberedSlot.identityDetail == "尾号 0937" &&
+            rememberedSlot.fullTitle == "RM520N-GL · 中国电信",
+        "an unplugged module forgot its model, carrier or SIM"
+    )
+    let neverSeen = identityResolver.appearance(moduleID: movedPort, simSlot: nil)
+    try expect(
+        neverSeen.badgeText != nil && neverSeen.badgeText != rememberedSlot.badgeText &&
+            neverSeen.title == "已移除的模组",
+        "two unplugged modules cannot be told apart"
+    )
+    let renamedLine = CommunicationLine(moduleID: movedPort, simSlot: nil)
+    identityRegistry.rename(renamedLine, to: "  旧电信卡 ")
+    try expect(
+        LineAppearanceResolver(modules: [], registry: identityRegistry)
+            .appearance(for: renamedLine).title == "旧电信卡",
+        "a renamed offline line did not show its name"
+    )
+    identityRegistry.rename(renamedLine, to: " ")
+    try expect(
+        LineAppearanceResolver(modules: [], registry: identityRegistry)
+            .appearance(for: renamedLine).title == "已移除的模组",
+        "clearing a line name did not restore the default"
+    )
+    // A name only applies while the line is offline.
+    var liveNameRegistry = lineRegistry
+    liveNameRegistry.rename(slotNamed, to: "备用卡")
+    let liveNameResolver = LineAppearanceResolver(
+        modules: [
+            lineModule(firstSIM, number: 1, carrier: "中国移动"),
+            lineModule(secondSIM, number: 2, carrier: "中国电信", slot: 1),
+        ],
+        registry: liveNameRegistry
+    )
+    try expect(
+        liveNameResolver.appearance(for: slotNamed).title == "备用卡" &&
+            liveNameResolver.appearance(moduleID: secondSIM, simSlot: 1).title == "模组 2 · 卡 1",
+        "a line name leaked onto a live line or was lost on an inactive slot"
     )
     try expect(
         unpluggedResolver.appearance(moduleID: secondSIM, simSlot: 1).colorIndex == 1,
