@@ -1157,6 +1157,11 @@ final class ModemService {
                 DispatchQueue.main.async { completion(.failure(L10n.tr("请先插入蜂窝模块。"))) }
                 return
             }
+            if celldock_modem_vendor_id(modem) == 0x2C7C,
+               celldock_modem_product_id(modem) == 0x0801 {
+                self.switchRM520NToECM(completion: completion)
+                return
+            }
             guard celldock_modem_vendor_id(modem) == 0x2C7C,
                   celldock_modem_product_id(modem) == 0x0125,
                   self.connectedModemMatchesExpectedIdentity() else {
@@ -1298,6 +1303,68 @@ final class ModemService {
                         : L10n.tr("已切换 CDC-ECM，模块正在重新枚举。")
                 ))
             }
+        }
+    }
+
+    /// Puts an RM520N-GL into CDC-ECM, the one network mode macOS drives
+    /// without a vendor driver. Runs on the modem queue. Only usbnet is
+    /// written: this module's USBCFG is never touched.
+    private func switchRM520NToECM(completion: @escaping (ModemActionResult) -> Void) {
+        guard connectedModemMatchesExpectedIdentity() else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("当前 AT 接口不是已锁定的 RM520N-GL 模块，未执行配置。")))
+            }
+            return
+        }
+        guard !callSnapshot.hasCall,
+              !hasPendingMediaCleanup,
+              !callActionInFlight else {
+            DispatchQueue.main.async { completion(.failure(L10n.tr("通话期间不能重启或切换模块网络模式。"))) }
+            return
+        }
+        guard case .empty = queryCallPresence() else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("无法确认模块中没有语音通话，未执行配置。")))
+            }
+            return
+        }
+
+        let usbNetQuery = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
+        guard usbNetQuery.isSuccess,
+              let currentMode = ATResponseParser.parseUSBNetMode(usbNetQuery.output) else {
+            DispatchQueue.main.async { completion(.failure(L10n.tr("无法可靠读取当前 usbnet 模式，未执行写入。"))) }
+            return
+        }
+        guard currentMode != 1 else {
+            snapshot.usbNetMode = 1
+            publishSnapshot(snapshot)
+            DispatchQueue.main.async {
+                completion(.success(L10n.tr("模块已经是 CDC-ECM 模式。")))
+            }
+            return
+        }
+
+        let writeUSBNet = command("AT+QCFG=\"usbnet\",1", timeout: 5_000)
+        guard writeUSBNet.isSuccess else {
+            DispatchQueue.main.async {
+                completion(.failure(writeUSBNet.error ?? L10n.tr("模块拒绝切换到 CDC-ECM 模式。")))
+            }
+            return
+        }
+        let verifyUSBNet = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
+        guard verifyUSBNet.isSuccess,
+              ATResponseParser.parseUSBNetMode(verifyUSBNet.output) == 1 else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("CDC-ECM 写入后的读回校验失败，未重启模块。")))
+            }
+            return
+        }
+
+        snapshot.usbNetMode = 1
+        _ = command("AT+CFUN=1,1", timeout: 1_000)
+        beginExpectedModuleRestart()
+        DispatchQueue.main.async {
+            completion(.success(L10n.tr("已切换 CDC-ECM，模块正在重新枚举。")))
         }
     }
 
@@ -1521,6 +1588,88 @@ final class ModemService {
                     enabled
                         ? L10n.tr("已开启接收来电，模块正在重启。")
                         : L10n.tr("已关闭接收来电，模块正在重启。")
+                ))
+            }
+        }
+    }
+
+    /// Switches voice calls on or off in the firmware of a data-only Quectel
+    /// module. As with the IMS mode, the value is read back before the module
+    /// is restarted to apply it, and nothing is written unless the current
+    /// value is one whose meaning is known.
+    func setVoiceCallsEnabled(
+        _ enabled: Bool,
+        completion: @escaping (ModemActionResult) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, self.isOpen else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块未连接"))) }
+                return
+            }
+            guard self.snapshot.hardwareFamily == .quectelNativeVoice else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("当前模组没有可切换的固件语音开关。")))
+                }
+                return
+            }
+            guard !self.callSnapshot.hasCall,
+                  !self.hasPendingMediaCleanup,
+                  !self.callActionInFlight else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("通话或语音清理期间不能切换语音通话设置。")))
+                }
+                return
+            }
+
+            let query = self.command("AT+QCALLCFG=\"voice_disable\"", timeout: 5_000)
+            guard query.isSuccess,
+                  let currentSetting = ATResponseParser.parseVoiceDisableSetting(query.output),
+                  VoiceCallSwitchPolicy.isEnabled(setting: currentSetting) != nil else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("无法可靠读取固件的语音开关，未执行写入。")))
+                }
+                return
+            }
+
+            let targetSetting = VoiceCallSwitchPolicy.setting(enabled: enabled)
+            if currentSetting == targetSetting {
+                self.snapshot.voiceDisableSetting = currentSetting
+                self.publishSnapshot(self.snapshot)
+                DispatchQueue.main.async {
+                    completion(.success(enabled ? L10n.tr("语音通话已经开启。") : L10n.tr("语音通话已经关闭。")))
+                }
+                return
+            }
+
+            let write = self.command(
+                "AT+QCALLCFG=\"voice_disable\",\(targetSetting)",
+                timeout: 8_000
+            )
+            guard write.isSuccess else {
+                DispatchQueue.main.async {
+                    completion(.failure(write.error ?? L10n.tr("模块拒绝修改语音通话设置。")))
+                }
+                return
+            }
+
+            let verify = self.command("AT+QCALLCFG=\"voice_disable\"", timeout: 5_000)
+            guard verify.isSuccess,
+                  ATResponseParser.parseVoiceDisableSetting(verify.output) == targetSetting else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("语音通话设置写入后的回读校验失败，未重启模块。")))
+                }
+                return
+            }
+
+            self.snapshot.voiceDisableSetting = targetSetting
+            self.publishSnapshot(self.snapshot)
+            _ = self.command("AT+CFUN=1,1", timeout: 1_000)
+            self.beginExpectedModuleRestart()
+            DispatchQueue.main.async {
+                completion(.success(
+                    enabled
+                        ? L10n.tr("已开启语音通话，模块正在重启。")
+                        : L10n.tr("已关闭语音通话，模块正在重启。")
                 ))
             }
         }

@@ -32,6 +32,7 @@ struct SIMManagementView: View {
     @State private var selection: Pane = .overview
     @State private var copiedField: String?
     @State private var pendingIncomingCallsEnabled: Bool?
+    @State private var pendingVoiceCallsEnabled: Bool?
     @State private var pendingSIMSlot: Int?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
@@ -132,6 +133,25 @@ struct SIMManagementView: View {
             }
         } message: {
             Text(L10n.tr("CellDock 会在%@中写入并回读 IMS=%lld，校验成功后再重启模块。蜂窝网络将短暂中断。", selectedModule?.displayName ?? L10n.tr("当前模组"), Int64(pendingIncomingCallsEnabled == true ? 1 : 0)))
+        }
+        .alert(
+            pendingVoiceCallsEnabled == true ? L10n.tr("开启语音通话？") : L10n.tr("关闭语音通话？"),
+            isPresented: Binding(
+                get: { pendingVoiceCallsEnabled != nil },
+                set: { if !$0 { pendingVoiceCallsEnabled = nil } }
+            )
+        ) {
+            Button("取消", role: .cancel) { pendingVoiceCallsEnabled = nil }
+            Button(
+                pendingVoiceCallsEnabled == true ? L10n.tr("重启并开启") : L10n.tr("重启并关闭"),
+                role: pendingVoiceCallsEnabled == false ? .destructive : nil
+            ) {
+                guard let enabled = pendingVoiceCallsEnabled else { return }
+                pendingVoiceCallsEnabled = nil
+                appState.setVoiceCallsEnabled(enabled, moduleID: selectedModuleID)
+            }
+        } message: {
+            Text(voiceCallsConfirmationMessage)
         }
         .alert(
             L10n.tr("切换到卡槽 %lld？", Int64(pendingSIMSlot ?? 1)),
@@ -1033,6 +1053,10 @@ struct SIMManagementView: View {
 
             Divider()
             incomingCallsRow
+            if showsVoiceCallsRow {
+                Divider()
+                voiceCallsRow
+            }
             Divider()
             HStack(spacing: 14) {
                 Image(systemName: "message.fill")
@@ -1210,6 +1234,10 @@ struct SIMManagementView: View {
             networkStatusRow
             Divider()
             incomingCallsRow
+            if showsVoiceCallsRow {
+                Divider()
+                voiceCallsRow
+            }
 
             Label(
                 L10n.tr("更改接收来电设置后将重启%@。", selectedModule?.displayName ?? L10n.tr("当前模组")),
@@ -1370,6 +1398,106 @@ struct SIMManagementView: View {
                 .help(L10n.tr("控制模块是否接收运营商来电"))
         }
         .padding(.vertical, 12)
+    }
+
+    /// Only modules whose firmware has the voice switch, at a value whose
+    /// meaning is known, get this row.
+    private var showsVoiceCallsRow: Bool {
+        selectedModem.firmwareVoiceCallsEnabled != nil
+    }
+
+    private var voiceCallsRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "phone.fill")
+                .font(.appSymbol(.rail))
+                .foregroundStyle(voiceCallsStateColor)
+                .frame(width: 38, height: 38)
+                .background(voiceCallsStateColor.opacity(0.10), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(L10n.tr("语音通话"))
+                        .font(.appBodyStrong)
+
+                    Text(voiceCallsStateText)
+                        .font(.appCaption.weight(.semibold))
+                        .foregroundStyle(voiceCallsStateColor)
+                }
+
+                Text(voiceCallsDetail)
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            if appState.isChangingVoiceCallSetting {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Toggle(L10n.tr("开启语音通话"), isOn: voiceCallsBinding)
+                .labelsHidden()
+                .toggleStyle(.adaptiveGlass)
+                .disabled(!canChangeVoiceCalls)
+                .accessibilityIdentifier("SIMManagementVoiceCallsToggle")
+                .help(L10n.tr("控制模块固件是否允许语音通话"))
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var voiceCallsBinding: Binding<Bool> {
+        Binding(
+            get: {
+                pendingVoiceCallsEnabled ??
+                    selectedModem.firmwareVoiceCallsEnabled ?? false
+            },
+            set: { pendingVoiceCallsEnabled = $0 }
+        )
+    }
+
+    private var canChangeVoiceCalls: Bool {
+        selectedModem.isConnected &&
+            selectedModem.firmwareVoiceCallsEnabled != nil &&
+            !appState.moduleHasCall(selectedModuleID) &&
+            !selectedEUICC.isBusy &&
+            !appState.isChangingVoiceCallSetting &&
+            !appState.isChangingIncomingCallSetting
+    }
+
+    private var voiceCallsDetail: String {
+        guard selectedModem.isConnected else { return L10n.tr("模块就绪后可配置语音通话") }
+        guard !appState.moduleHasCall(selectedModuleID) else { return L10n.tr("通话期间不可更改") }
+        return selectedModem.firmwareVoiceCallsEnabled == true
+            ? L10n.tr("固件已允许语音通话。移远官方未对该模组的语音通话提供支持。")
+            : L10n.tr("固件已关闭语音通话，目前只能上网和收发短信。")
+    }
+
+    private var voiceCallsStateText: String {
+        if appState.isChangingVoiceCallSetting { return L10n.tr("更新中") }
+        return selectedModem.firmwareVoiceCallsEnabled == true ? L10n.tr("已开启") : L10n.tr("已关闭")
+    }
+
+    private var voiceCallsStateColor: Color {
+        if appState.isChangingVoiceCallSetting { return .blue }
+        return selectedModem.firmwareVoiceCallsEnabled == true ? .green : .secondary
+    }
+
+    private var voiceCallsConfirmationMessage: String {
+        let moduleName = selectedModule?.displayName ?? L10n.tr("当前模组")
+        if pendingVoiceCallsEnabled == false {
+            return L10n.tr(
+                "CellDock 会在%@中写入并回读 voice_disable=%lld，校验成功后再重启模块，蜂窝网络将短暂中断。之后该模组无法拨打和接听电话。",
+                moduleName,
+                Int64(VoiceCallSwitchPolicy.disabledSetting)
+            )
+        }
+        return L10n.tr(
+            "CellDock 会在%@中写入并回读 voice_disable=%lld，校验成功后再重启模块，蜂窝网络将短暂中断。移远官方未对该模组的语音通话提供支持。",
+            moduleName,
+            Int64(VoiceCallSwitchPolicy.enabledSetting)
+        )
     }
 
     private var incomingCallsBinding: Binding<Bool> {

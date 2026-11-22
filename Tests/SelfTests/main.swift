@@ -2520,10 +2520,37 @@ do {
                 usbIdentity: "2C7C:0801",
                 usbNetMode: mode,
                 usbConfiguration: rm520USBConfiguration
-            ).initialSetupState == .unsupportedUSBNetMode(mode),
-            "RM520N-GL usbnet=\(mode) offered a configuration write"
+            ).initialSetupState == .needsECMSwitch(mode),
+            "RM520N-GL usbnet=\(mode) was not offered the switch to ECM"
         )
     }
+    try expect(
+        ModemSnapshot(
+            state: .connected,
+            usbIdentity: "2C7C:0801",
+            usbNetMode: 0,
+            usbConfiguration: rm520USBConfiguration
+        ).operationalState == .configurationRequired,
+        "an RM520N-GL that still needs ECM was reported as ready"
+    )
+    try expect(
+        VoiceCallSwitchPolicy.isEnabled(setting: 1) == false &&
+            VoiceCallSwitchPolicy.isEnabled(setting: 2) == true &&
+            VoiceCallSwitchPolicy.isEnabled(setting: 0) == nil &&
+            VoiceCallSwitchPolicy.isEnabled(setting: 3) == nil &&
+            VoiceCallSwitchPolicy.isEnabled(setting: nil) == nil,
+        "a voice_disable value of unknown meaning was offered as a switch"
+    )
+    try expect(
+        VoiceCallSwitchPolicy.setting(enabled: true) == 2 && VoiceCallSwitchPolicy.setting(enabled: false) == 1,
+        "the firmware voice switch would write a value other than the two that are understood"
+    )
+    var voiceSwitchModem = ModemSnapshot(state: .connected, simState: .ready)
+    try expect(voiceSwitchModem.firmwareVoiceCallsEnabled == nil, "a module without the switch offered it")
+    voiceSwitchModem.voiceDisableSetting = 1
+    try expect(voiceSwitchModem.firmwareVoiceCallsEnabled == false, "voice_disable=1 was not shown as off")
+    voiceSwitchModem.voiceDisableSetting = 2
+    try expect(voiceSwitchModem.firmwareVoiceCallsEnabled == true, "voice_disable=2 was not shown as on")
     try expect(
         ModemSnapshot(
             state: .connected,

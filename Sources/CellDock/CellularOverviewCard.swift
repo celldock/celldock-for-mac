@@ -343,7 +343,13 @@ struct CellularOverviewCard: View {
             Spacer(minLength: 8)
 
             Button {
-                appState.configureECM()
+                if case .needsECMSwitch = displayedModem.initialSetupState {
+                    // The setup window asks for confirmation before it
+                    // restarts an RM520N-GL.
+                    appState.showInitialSetupWindow()
+                } else {
+                    appState.configureECM()
+                }
             } label: {
                 if appState.isConfiguringECM {
                     ProgressView().controlSize(.small)

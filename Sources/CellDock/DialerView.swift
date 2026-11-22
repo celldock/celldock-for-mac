@@ -85,10 +85,26 @@ struct DialerView: View {
                 .font(.appTitle)
                 .lineLimit(1)
 
-            Text(verbatim: callAvailabilityText)
-                .font(.appCallout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text(verbatim: callAvailabilityText)
+                    .font(.appCallout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if offersVoiceCallSwitch {
+                    // The switch lives on the SIM page, with its confirmation.
+                    Button(L10n.tr("去开启")) {
+                        model.present(
+                            number: nil,
+                            section: nil,
+                            simModuleID: appState.currentCommunicationModuleID
+                        )
+                    }
+                    .buttonStyle(.link)
+                    .font(.appCallout)
+                    .help(L10n.tr("在 SIM 页开启该模组的语音通话"))
+                }
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -222,6 +238,17 @@ struct DialerView: View {
         appState.lineAppearanceResolver.currentAppearance(
             moduleID: appState.currentCommunicationModuleID
         )
+    }
+
+    /// Voice is switched off in the module's firmware and the SIM page can
+    /// switch it on.
+    private var offersVoiceCallSwitch: Bool {
+        let modem = appState.currentCommunicationModemSnapshot
+        return modem.isConnected &&
+            modem.simReady &&
+            modem.voiceServiceAvailability == .disabledByFirmware &&
+            modem.firmwareVoiceCallsEnabled == false &&
+            appState.currentCommunicationModuleID != nil
     }
 
     private var callAvailabilityText: String {

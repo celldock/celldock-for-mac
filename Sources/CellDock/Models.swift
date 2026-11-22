@@ -154,6 +154,27 @@ struct VoiceCapabilityVerificationStore {
     }
 }
 
+/// AT+QCALLCFG="voice_disable" on data-only Quectel modules. Two of its four
+/// values are understood: 1, which the RM520N-GL ships with and which makes
+/// every ATD answer NO CARRIER, and 2, which Quectel support gives for
+/// enabling calls. Nothing is offered or written for the others.
+enum VoiceCallSwitchPolicy {
+    static let disabledSetting = 1
+    static let enabledSetting = 2
+
+    static func isEnabled(setting: Int?) -> Bool? {
+        switch setting {
+        case disabledSetting: return false
+        case enabledSetting: return true
+        default: return nil
+        }
+    }
+
+    static func setting(enabled: Bool) -> Int {
+        enabled ? enabledSetting : disabledSetting
+    }
+}
+
 /// Holds back "VoLTE is not available" until the module has kept saying so
 /// for a while. IMS registers a few seconds after the packet
 /// domain does, so the first reads after a start, a SIM change or a slot
@@ -574,6 +595,13 @@ struct ModemSnapshot: Equatable {
         }
     }
 
+    /// Whether the firmware's voice switch can be offered, and where it
+    /// stands: nil when this module has no such switch or reports a value
+    /// whose meaning is not known.
+    var firmwareVoiceCallsEnabled: Bool? {
+        VoiceCallSwitchPolicy.isEnabled(setting: voiceDisableSetting)
+    }
+
     /// AT+QCFG="ims" 1 forces IMS on. 0 leaves it to the carrier
     /// configuration and 2 forces it off, so neither is "switched on".
     var incomingCallsForcedOn: Bool? {
@@ -616,7 +644,7 @@ struct ModemSnapshot: Equatable {
             return .ready
         case .inspecting:
             return .initializing
-        case .needsIdentityConversion, .needsECM, .unsupportedIdentity,
+        case .needsIdentityConversion, .needsECM, .needsECMSwitch, .unsupportedIdentity,
              .unsupportedUSBConfiguration, .unsupportedUSBNetMode:
             return .configurationRequired
         case .insertModule:
@@ -650,11 +678,12 @@ struct ModemSnapshot: Equatable {
             return .unsupportedUSBConfiguration(usbConfiguration.compactDescription)
         }
         if normalizedIdentity == "2C7C:0801" {
-            // RM520N-GL: CellDock never writes USB configuration to this
-            // module, so any USBCFG is accepted and only ECM (usbnet 1) is
-            // usable. Other net modes are reported, never converted.
+            // RM520N-GL: CellDock never writes USBCFG to this module, so
+            // any USBCFG is accepted. Only ECM (usbnet 1) works on macOS;
+            // from another net mode the switch is offered, and usbnet is
+            // the one thing it writes.
             guard let usbNetMode else { return .inspecting }
-            return usbNetMode == 1 ? .ready : .unsupportedUSBNetMode(usbNetMode)
+            return usbNetMode == 1 ? .ready : .needsECMSwitch(usbNetMode)
         }
         guard normalizedIdentity == "2C7C:0125" else {
             return .unsupportedIdentity(normalizedIdentity)
@@ -684,6 +713,9 @@ enum ModemInitialSetupState: Equatable {
     case inspecting
     case needsIdentityConversion
     case needsECM
+    /// An RM520N-GL in another network mode. Only usbnet has to change; the
+    /// associated value is the mode it is in now.
+    case needsECMSwitch(Int)
     case ready
     case unsupportedIdentity(String)
     case unsupportedUSBConfiguration(String)

@@ -148,6 +148,7 @@ final class AppState: ObservableObject {
     @Published var isConvertingModuleIdentity = false
     @Published var isChangingCall = false
     @Published var isChangingIncomingCallSetting = false
+    @Published var isChangingVoiceCallSetting = false
     /// The module that is switching SIM slots and the slot it is moving to.
     @Published private(set) var simSlotSwitch: SIMSlotSwitchProgress?
     @Published var isSendingMessage = false
@@ -2521,6 +2522,31 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Switches voice calls on or off in the module's firmware. The module
+    /// restarts to apply it, so the caller confirms with the person first.
+    func setVoiceCallsEnabled(
+        _ enabled: Bool,
+        moduleID requestedModuleID: CellularModuleID? = nil
+    ) {
+        guard !isChangingVoiceCallSetting else { return }
+        let moduleID = requestedModuleID ?? currentCommunicationModuleID
+        guard !euiccSnapshot(for: moduleID).isBusy else {
+            presentTransientMessage(L10n.tr("eSIM 操作期间不能更改语音通话设置。"), isError: true)
+            return
+        }
+        guard let service = modemService(for: moduleID) else {
+            presentTransientMessage(L10n.tr("所选模组尚未就绪。"), isError: true)
+            return
+        }
+        isChangingVoiceCallSetting = true
+        dismissTransientMessage()
+        service.setVoiceCallsEnabled(enabled) { [weak self] result in
+            guard let self else { return }
+            self.isChangingVoiceCallSetting = false
+            self.show(result)
+        }
+    }
+
     func isSwitchingSIMSlot(on moduleID: CellularModuleID?) -> Bool {
         guard let simSlotSwitch else { return false }
         return simSlotSwitch.moduleID == communicationModuleID(requested: moduleID)
@@ -3037,6 +3063,7 @@ final class AppState: ObservableObject {
             isSendingMessage ||
             isExecutingAT ||
             isChangingIncomingCallSetting ||
+            isChangingVoiceCallSetting ||
             isConfiguringECM ||
             isConvertingModuleIdentity
         if moduleIsBusy {
@@ -3078,7 +3105,7 @@ final class AppState: ObservableObject {
             if !hasCompletedInitialSetup {
                 scheduleInitialSetupPromptIfNeeded()
             }
-        case .needsIdentityConversion, .needsECM, .unsupportedIdentity,
+        case .needsIdentityConversion, .needsECM, .needsECMSwitch, .unsupportedIdentity,
              .unsupportedUSBConfiguration, .unsupportedUSBNetMode:
             presentInitialSetupIfNeeded(forUninitializedModule: true)
         case .failed:
@@ -3108,8 +3135,8 @@ final class AppState: ObservableObject {
                 self.recordInitialSetupSuccess()
             case .inspecting:
                 self.scheduleInitialSetupPromptIfNeeded(afterNanoseconds: 1_500_000_000)
-            case .insertModule, .needsIdentityConversion, .needsECM, .unsupportedIdentity,
-                 .unsupportedUSBConfiguration, .unsupportedUSBNetMode, .failed:
+            case .insertModule, .needsIdentityConversion, .needsECM, .needsECMSwitch,
+                 .unsupportedIdentity, .unsupportedUSBConfiguration, .unsupportedUSBNetMode, .failed:
                 self.presentInitialSetupIfNeeded()
             }
         }

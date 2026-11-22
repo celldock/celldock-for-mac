@@ -5,6 +5,8 @@ struct CellDockInitialSetupView: View {
     private enum Confirmation: Equatable {
         case identityConversion
         case ecmInitialization
+        /// An RM520N-GL in another network mode: only usbnet is switched.
+        case ecmSwitch
     }
 
     @EnvironmentObject private var appState: AppState
@@ -53,6 +55,9 @@ struct CellDockInitialSetupView: View {
                 confirmation = nil
             }
             if state != .needsECM && confirmation == .ecmInitialization {
+                confirmation = nil
+            }
+            if !needsECMSwitch && confirmation == .ecmSwitch {
                 confirmation = nil
             }
             if state != .needsIdentityConversion {
@@ -363,6 +368,18 @@ struct CellDockInitialSetupView: View {
                 .adaptiveGlassButton(.accented)
                 .keyboardShortcut(.defaultAction)
                 .disabled(appState.call.hasCall)
+            } else if needsECMSwitch {
+                Button {
+                    confirmation = .ecmSwitch
+                } label: {
+                    actionButtonLabel(
+                        L10n.tr("切换到 ECM"),
+                        systemImage: "arrow.left.arrow.right"
+                    )
+                }
+                .adaptiveGlassButton(.accented)
+                .keyboardShortcut(.defaultAction)
+                .disabled(appState.call.hasCall)
             } else if appState.modem.initialSetupState == .ready {
                 Button {
                     appState.completeInitialSetup()
@@ -406,9 +423,14 @@ struct CellDockInitialSetupView: View {
         switch confirmation {
         case .identityConversion:
             appState.convertDJIModuleIdentity()
-        case .ecmInitialization:
+        case .ecmInitialization, .ecmSwitch:
             appState.configureECM()
         }
+    }
+
+    private var needsECMSwitch: Bool {
+        if case .needsECMSwitch = appState.modem.initialSetupState { return true }
+        return false
     }
 
     private func dismissIfAllowed() {
@@ -424,6 +446,7 @@ struct CellDockInitialSetupView: View {
         switch confirmation {
         case .identityConversion: return L10n.tr("转换并重启 DJI 模块？")
         case .ecmInitialization: return L10n.tr("初始化并重启模块？")
+        case .ecmSwitch: return L10n.tr("切换到 ECM 并重启模块？")
         }
     }
 
@@ -437,6 +460,8 @@ struct CellDockInitialSetupView: View {
                 return L10n.tr("CellDock 将写入 usbnet=1 和完整 USBCFG。逐项回读成功后模块会重启一次；Quectel 设备不会注入语音内核模块。")
             }
             return L10n.tr("CellDock 将确认完整 USBCFG 并把 usbnet 切换为 1。写入回读成功后模块会重启一次。")
+        case .ecmSwitch:
+            return L10n.tr("CellDock 只会把 usbnet 写为 1，不改动其他 USB 配置。回读成功后模块会重启一次，蜂窝网络将中断约半分钟。")
         }
     }
 
@@ -444,6 +469,7 @@ struct CellDockInitialSetupView: View {
         switch confirmation {
         case .identityConversion: return L10n.tr("转换并重启")
         case .ecmInitialization: return L10n.tr("确认初始化")
+        case .ecmSwitch: return L10n.tr("重启并切换")
         }
     }
 
@@ -451,6 +477,7 @@ struct CellDockInitialSetupView: View {
         switch confirmation {
         case .identityConversion: return "arrow.triangle.2.circlepath"
         case .ecmInitialization: return "wand.and.stars"
+        case .ecmSwitch: return "arrow.left.arrow.right"
         }
     }
 
@@ -460,6 +487,7 @@ struct CellDockInitialSetupView: View {
         case .inspecting: return L10n.tr("正在识别模块")
         case .needsIdentityConversion: return L10n.tr("识别到 DJI 原始配置")
         case .needsECM: return L10n.tr("模块尚未初始化")
+        case .needsECMSwitch: return L10n.tr("联网模式需要切换")
         case .ready: return L10n.tr("模块已准备好")
         case .unsupportedIdentity: return L10n.tr("识别到不兼容的 USB 身份")
         case .unsupportedUSBConfiguration: return L10n.tr("DJI 配置未通过校验")
@@ -478,6 +506,8 @@ struct CellDockInitialSetupView: View {
             return L10n.tr("已确认安全原值，可一键转换为 CellDock 兼容配置。")
         case .needsECM:
             return L10n.tr("已识别模块，但 macOS 联网所需的 CDC‑ECM 尚未开启。")
+        case let .needsECMSwitch(mode):
+            return L10n.tr("检测到 usbnet=%lld。macOS 联网需要 CDC‑ECM（usbnet=1），可以在这里切换。", Int64(mode))
         case .ready:
             return appState.modem.simReady
                 ? L10n.tr("USB 身份和 CDC‑ECM 均已通过检查，可以开始使用。")
@@ -521,7 +551,7 @@ struct CellDockInitialSetupView: View {
         case .insertModule: return "cable.connector.slash"
         case .inspecting: return "wave.3.right.circle"
         case .needsIdentityConversion: return "arrow.triangle.2.circlepath.circle.fill"
-        case .needsECM: return "wrench.and.screwdriver.fill"
+        case .needsECM, .needsECMSwitch: return "wrench.and.screwdriver.fill"
         case .ready: return "checkmark.circle.fill"
         case .unsupportedIdentity, .unsupportedUSBConfiguration, .unsupportedUSBNetMode, .failed:
             return "exclamationmark.triangle.fill"
@@ -531,7 +561,7 @@ struct CellDockInitialSetupView: View {
     private var setupColor: Color {
         switch appState.modem.initialSetupState {
         case .ready: return .green
-        case .needsIdentityConversion, .needsECM: return .orange
+        case .needsIdentityConversion, .needsECM, .needsECMSwitch: return .orange
         case .unsupportedIdentity, .unsupportedUSBConfiguration, .unsupportedUSBNetMode, .failed: return .red
         case .insertModule, .inspecting: return Color.accentColor
         }
