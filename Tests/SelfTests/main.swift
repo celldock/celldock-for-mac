@@ -3999,6 +3999,177 @@ do {
         ) == nil,
         "an ECM counter reset was misreported as a multi-gigabyte throughput spike"
     )
+    // Live speed history keeps the latest 60 samples, oldest first.
+    var speedHistory = NetworkThroughputHistory()
+    for second in 0..<75 {
+        speedHistory.append(NetworkThroughput(
+            downloadBytesPerSecond: Double(second),
+            uploadBytesPerSecond: Double(second) / 2
+        ))
+    }
+    try expect(
+        speedHistory.samples.count == 60 &&
+            speedHistory.samples.first?.downloadBytesPerSecond == 15 &&
+            speedHistory.latest?.downloadBytesPerSecond == 74 &&
+            speedHistory.peakBytesPerSecond == 74,
+        "the 60-second speed history did not keep exactly the newest samples"
+    )
+    speedHistory.removeAll()
+    try expect(speedHistory.samples.isEmpty && speedHistory.latest == nil, "the speed history did not reset")
+    try expect(
+        NetworkSpeedFormatter.byteCount(0) == "—" &&
+            NetworkSpeedFormatter.byteCount(512) == "512 B" &&
+            NetworkSpeedFormatter.byteCount(48_200_000).hasSuffix("MB") &&
+            NetworkSpeedFormatter.compactPair(NetworkThroughput(
+                downloadBytesPerSecond: 2_400_000,
+                uploadBytesPerSecond: 320_000
+            )).hasPrefix("↓"),
+        "traffic amounts or compact speed pairs were formatted incorrectly"
+    )
+
+    // Per-proxy request history is a ring buffer, newest first.
+    func requestRecord(_ target: String, _ outcome: SOCKSProxyRequestOutcome = .completed) -> SOCKSProxyRequestRecord {
+        var record = SOCKSProxyRequestRecord(client: "192.168.1.31:50000")
+        record.command = .tcpConnect
+        record.target = target
+        record.outcome = outcome
+        record.endedAt = Date()
+        return record
+    }
+    var requestHistory = SOCKSProxyRequestHistory(capacity: 3)
+    for index in 1...5 { requestHistory.append(requestRecord("host\(index):443")) }
+    try expect(
+        requestHistory.count == 3 &&
+            requestHistory.records.map(\.target) == ["host5:443", "host4:443", "host3:443"],
+        "the request history ring buffer did not keep the newest entries in order"
+    )
+    requestHistory.removeAll()
+    requestHistory.append(requestRecord("again:80"))
+    try expect(
+        requestHistory.records.map(\.target) == ["again:80"],
+        "the request history did not restart cleanly after being cleared"
+    )
+    try expect(
+        SOCKSProxyRequestHistory().capacity == 1_000,
+        "a proxy must keep at most 1,000 requests"
+    )
+
+    // Connection errors map onto the outcome shown in the list.
+    try expect(
+        SOCKSProxyRequestOutcome.upstreamFailure(SOCKSDNSError.noAddresses) == .resolutionFailed &&
+            SOCKSProxyRequestOutcome.upstreamFailure(SOCKSDNSError.timedOut) == .resolutionFailed &&
+            SOCKSProxyRequestOutcome.upstreamFailure(
+                BoundSocketError.systemCall(operation: "connect", code: ECONNREFUSED)
+            ) == .connectionRefused &&
+            SOCKSProxyRequestOutcome.upstreamFailure(
+                BoundSocketError.systemCall(operation: "connect", code: ETIMEDOUT)
+            ) == .timedOut &&
+            SOCKSProxyRequestOutcome.upstreamFailure(
+                BoundSocketError.systemCall(operation: "connect", code: ENETUNREACH)
+            ) == .networkUnreachable &&
+            SOCKSProxyRequestOutcome.upstreamFailure(
+                BoundSocketError.systemCall(operation: "connect", code: EHOSTUNREACH)
+            ) == .hostUnreachable &&
+            SOCKSProxyRequestOutcome.upstreamFailure(
+                BoundSocketError.interfaceNotFound("en9")
+            ) == .hostUnreachable,
+        "upstream connection errors were mapped to the wrong request outcome"
+    )
+    try expect(
+        !SOCKSProxyRequestOutcome.completed.isFailure &&
+            !SOCKSProxyRequestOutcome.disconnected.isFailure &&
+            !SOCKSProxyRequestOutcome.inProgress.isFailure &&
+            SOCKSProxyRequestOutcome.authenticationFailed.isFailure &&
+            SOCKSProxyRequestOutcome.sessionLimitReached.isFailure &&
+            SOCKSProxyRequestOutcome.handshakeTimedOut.isFailure,
+        "the failure filter classifies request outcomes incorrectly"
+    )
+    try expect(
+        SOCKSProxyRequestFormatting.endpoint(.ipv4([10, 0, 0, 5]), port: 8080) == "10.0.0.5:8080" &&
+            SOCKSProxyRequestFormatting.endpoint(.domain("github.com"), port: 443) == "github.com:443" &&
+            SOCKSProxyRequestFormatting.endpoint(
+                .ipv6([0x20, 0x01, 0x0D, 0xB8] + [UInt8](repeating: 0, count: 11) + [1]),
+                port: 53
+            ) == "[2001:db8::1]:53",
+        "request destinations were formatted incorrectly"
+    )
+
+    // Byte counts accumulate per session; the first outcome wins.
+    let requestTracker = SOCKSProxyRequestTracker(record: SOCKSProxyRequestRecord(client: "127.0.0.1:1"))
+    requestTracker.setRequest(command: .udpAssociate, target: nil)
+    requestTracker.noteUDPDestination(target: "8.8.8.8:53", resolvedAddress: "8.8.8.8")
+    requestTracker.noteUDPDestination(target: "1.1.1.1:53", resolvedAddress: "1.1.1.1")
+    requestTracker.noteUDPDestination(target: "8.8.8.8:53", resolvedAddress: "8.8.8.8")
+    requestTracker.addDownloaded(1_000)
+    requestTracker.addUploaded(250)
+    requestTracker.addDownloaded(24)
+    let liveRequest = requestTracker.current
+    try expect(
+        liveRequest.isActive && liveRequest.downloadedBytes == 1_024 &&
+            liveRequest.uploadedBytes == 250 && liveRequest.destinationCount == 2 &&
+            liveRequest.target == "8.8.8.8:53",
+        "a running request did not accumulate its traffic and destinations"
+    )
+    requestTracker.finish(.disconnected)
+    let finishedRequest = requestTracker.finish(.completed)
+    try expect(
+        finishedRequest.outcome == .disconnected && finishedRequest.endedAt != nil,
+        "a later teardown overwrote the reason a request ended"
+    )
+    var probeRecord = SOCKSProxyRequestRecord(client: "x")
+    probeRecord.outcome = .completed
+    var failedLogin = SOCKSProxyRequestRecord(client: "x")
+    failedLogin.outcome = .authenticationFailed
+    try expect(
+        !probeRecord.isWorthKeeping && failedLogin.isWorthKeeping,
+        "a connection that never asked for anything was kept, or a failed login was dropped"
+    )
+
+    // Totals keep counting when history recording is off or cleared, so the
+    // per-proxy speed stays correct.
+    let requestLog = SOCKSProxyRequestLog(capacity: 10, recordsHistory: false)
+    var archived = requestRecord("a:1")
+    archived.downloadedBytes = 700
+    archived.uploadedBytes = 300
+    requestLog.archive(archived)
+    try expect(
+        requestLog.snapshot(active: []).history.isEmpty &&
+            requestLog.snapshot(active: []).totalDownloadedBytes == 700,
+        "a request was kept although history recording was off, or its bytes were lost"
+    )
+    requestLog.isRecordingHistory = true
+    requestLog.archive(archived)
+    requestLog.archive(requestRecord("b:2", .connectionRefused))
+    let withActive = requestLog.snapshot(active: [requestTracker])
+    try expect(
+        withActive.history.map(\.target) == ["b:2", "a:1"] &&
+            withActive.active.count == 1 &&
+            withActive.totalDownloadedBytes == 1_400 + 1_024 &&
+            withActive.totalUploadedBytes == 600 + 250,
+        "the request snapshot did not combine history, running requests and totals"
+    )
+    requestLog.clearHistory()
+    try expect(
+        requestLog.snapshot(active: []).history.isEmpty &&
+            requestLog.snapshot(active: []).totalDownloadedBytes == 1_400,
+        "clearing the history must not reset the traffic totals"
+    )
+
+    var proxyRate = SOCKSProxyTrafficRateTracker()
+    try expect(
+        proxyRate.rate(downloaded: 1_000, uploaded: 100, uptime: 10) == nil,
+        "the first per-proxy sample must only set the baseline"
+    )
+    let secondRate = proxyRate.rate(downloaded: 5_000, uploaded: 300, uptime: 12)
+    try expect(
+        secondRate?.downloadBytesPerSecond == 2_000 && secondRate?.uploadBytesPerSecond == 100,
+        "the per-proxy speed was not derived from the byte totals"
+    )
+    try expect(
+        proxyRate.rate(downloaded: 10, uploaded: 10, uptime: 13) == .zero,
+        "shrinking totals produced a negative per-proxy speed"
+    )
+
     try expect(
         ModuleVoiceInitializationRetryPolicy.delay(forCompletedAttempts: 0) == 2 &&
             ModuleVoiceInitializationRetryPolicy.delay(forCompletedAttempts: 1) == 5 &&
@@ -5865,6 +6036,77 @@ do {
         return relaySessionCount.value == 0
     }
     try expect(relaySessionsDrained(), "a session stayed open after both directions had ended")
+    // The finished request is in the proxy's history with its byte counts.
+    let relaySnapshot = relayServer.snapshot()
+    guard let relayedRequest = relaySnapshot.history.first else {
+        throw SelfTestFailure.failed("the relayed request was not recorded in the history")
+    }
+    try expect(
+        relaySnapshot.active.isEmpty &&
+            relayedRequest.command == .tcpConnect &&
+            relayedRequest.target == "127.0.0.1:\(upstreamListener.port)" &&
+            relayedRequest.resolvedAddress == "127.0.0.1" &&
+            relayedRequest.client.hasPrefix("127.0.0.1:") &&
+            relayedRequest.outcome == .completed &&
+            relayedRequest.uploadedBytes == UInt64(relayRequestSize) &&
+            relayedRequest.downloadedBytes == UInt64("RECEIVED \(relayRequestSize)".utf8.count) &&
+            relaySnapshot.totalUploadedBytes == UInt64(relayRequestSize),
+        "the relayed request was recorded with the wrong details: \(relayedRequest)"
+    )
+
+    // A refused upstream is recorded as such.
+    let refusedPort: UInt16 = try {
+        let temporary = try LoopbackSocket.listener()
+        return temporary.port
+    }()
+    let refusedClient = try LoopbackSocket.connect(port: relayProxyPort)
+    try expect(
+        refusedClient.sendAll([0x05, 0x01, 0x00]) &&
+            refusedClient.receive(exactly: 2) == [0x05, 0x00] &&
+            refusedClient.sendAll([
+                0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1,
+                UInt8(refusedPort >> 8), UInt8(refusedPort & 0xFF),
+            ]),
+        "the refused CONNECT could not be sent"
+    )
+    let refusedReply = refusedClient.receive(exactly: 10)
+    try expect(refusedReply?.prefix(2) == [0x05, 0x05], "a refused upstream was not reported to the client")
+    try expect(relaySessionsDrained(), "the refused session stayed open")
+    try expect(
+        relayServer.snapshot().history.first?.outcome == .connectionRefused,
+        "a refused upstream was not recorded as connection refused"
+    )
+
+    // Disconnecting a running request from the list ends it and records why.
+    let heldClient = try LoopbackSocket.connect(port: relayProxyPort)
+    try expect(
+        heldClient.sendAll([0x05, 0x01, 0x00]) &&
+            heldClient.receive(exactly: 2) == [0x05, 0x00] &&
+            heldClient.sendAll([
+                0x05, 0x03, 0x00, 0x03, UInt8("localhost".utf8.count),
+            ] + Array("localhost".utf8) + [0x00, 0x35]) &&
+            heldClient.receive(exactly: 10)?.prefix(2) == [0x05, 0x00],
+        "the UDP association could not be opened"
+    )
+    let runningAssociation = relayServer.snapshot().active.first
+    try expect(
+        runningAssociation?.command == .udpAssociate && runningAssociation?.isActive == true,
+        "a running UDP association was not listed as active"
+    )
+    relayServer.cancel(requestID: runningAssociation!.id)
+    try expect(relaySessionsDrained(), "disconnecting a request did not end its session")
+    try expect(
+        relayServer.snapshot().history.first?.outcome == .disconnected &&
+            relayServer.snapshot().history.first?.id == runningAssociation?.id,
+        "a request ended from the list was not recorded as disconnected"
+    )
+    relayServer.clearHistory()
+    try expect(
+        relayServer.snapshot().history.isEmpty &&
+            relayServer.snapshot().totalUploadedBytes >= UInt64(relayRequestSize),
+        "clearing a proxy's history failed or reset its totals"
+    )
+    _ = heldClient
 
     // The usual order: the upstream answers and closes first, and the client
     // closes once it has read everything. The client must see the upstream's

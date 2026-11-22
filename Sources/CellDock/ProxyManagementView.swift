@@ -62,10 +62,12 @@ struct ProxyManagementView: View {
                 List {
                     ForEach(availableModules) { module in
                         if let imei = module.modem.moduleIMEI {
-                            Section(module.selectorTitle) {
+                            Section {
                                 ForEach(configurations(for: imei)) { config in
                                     row(config, fallbackState: .disabled)
                                 }
+                            } header: {
+                                moduleSectionHeader(module)
                             }
                         }
                     }
@@ -80,6 +82,39 @@ struct ProxyManagementView: View {
                 .listStyle(.sidebar)
                 .communicationEmphasizedSelection()
             }
+        }
+        .sampleModuleThroughput(appState.moduleThroughputMonitor)
+    }
+
+    /// Module name with its live speed, or why there is none.
+    private func moduleSectionHeader(_ module: CellularModuleSummary) -> some View {
+        HStack(spacing: 6) {
+            Text(verbatim: module.selectorTitle)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 6)
+            ModuleThroughputText(
+                monitor: appState.moduleThroughputMonitor,
+                moduleID: module.id,
+                unavailableText: moduleLinkStatus(module)
+            )
+            .font(.appCaption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .layoutPriority(1)
+        }
+    }
+
+    private func moduleLinkStatus(_ module: CellularModuleSummary) -> String? {
+        switch SOCKSProxyRunPolicy.stoppedState(
+            isEnabled: true,
+            mode: appState.networkMode(for: module.id),
+            network: appState.networkStatus(for: module.id)
+        ) {
+        case .stoppedCellularDisabled: return L10n.tr("蜂窝网络关闭")
+        case .stoppedLinkDown: return L10n.tr("链路中断")
+        case .stoppedModuleOffline: return L10n.tr("离线")
+        default: return nil
         }
     }
 
@@ -104,6 +139,7 @@ struct ProxyManagementView: View {
             ProxyEditorView(
                 configuration: configuration,
                 controller: controller,
+                monitor: appState.moduleThroughputMonitor,
                 modules: availableModules,
                 onDelete: { self.selectedID = nil }
             )
@@ -173,7 +209,7 @@ private extension SOCKSProxyConfiguration {
 private extension SOCKSProxyRuntimeState {
     var statusText: String {
         switch self {
-        case let .running(connections): return L10n.tr("运行中 · %lld 个连接", Int64(connections))
+        case let .running(connections): return L10n.tr("运行中 · %lld 个活动请求", Int64(connections))
         case .stoppedModuleOffline: return L10n.tr("已停止 · 模组离线")
         case .stoppedCellularDisabled: return L10n.tr("已停止 · 蜂窝网络关闭")
         case .stoppedLinkDown: return L10n.tr("已停止 · ECM 链路中断")
@@ -289,8 +325,11 @@ private struct ProxyEditorView: View {
     /// The configuration as currently saved in the store.
     let configuration: SOCKSProxyConfiguration
     @ObservedObject var controller: SOCKSProxyController
+    let monitor: ModuleThroughputMonitor
     let modules: [CellularModuleSummary]
     let onDelete: () -> Void
+
+    @AppStorage("ProxyDetailTab.v1") private var storedTab = ProxyDetailTab.settings.rawValue
 
     @State private var draft: SOCKSProxyConfiguration
     @State private var password: String
@@ -308,6 +347,7 @@ private struct ProxyEditorView: View {
     init(
         configuration: SOCKSProxyConfiguration,
         controller: SOCKSProxyController,
+        monitor: ModuleThroughputMonitor,
         modules: [CellularModuleSummary],
         onDelete: @escaping () -> Void
     ) {
@@ -318,15 +358,80 @@ private struct ProxyEditorView: View {
         _savedPassword = State(initialValue: storedPassword)
         _lanAddress = State(initialValue: LocalNetworkAddress.currentLANIPv4())
         self.controller = controller
+        self.monitor = monitor
         self.modules = modules
         self.onDelete = onDelete
     }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AdaptiveGlassContainer(spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
+                    CommunicationGlassTabs(
+                        items: [
+                            (ProxyDetailTab.settings, "设置"),
+                            (ProxyDetailTab.requests, "请求")
+                        ],
+                        selection: detailTab
+                    )
+                    .frame(maxWidth: 260)
+                    .accessibilityIdentifier("ProxyDetailTabs")
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 28)
+            .padding(.bottom, 16)
+            .frame(maxWidth: detailTab.wrappedValue == .settings ? 760 : .infinity, alignment: .leading)
+
+            switch detailTab.wrappedValue {
+            case .settings:
+                settingsContent
+            case .requests:
+                ProxyRequestsView(
+                    proxyID: configuration.id,
+                    controller: controller,
+                    monitor: monitor,
+                    moduleTitle: moduleTitle,
+                    interfaceName: modules
+                        .first(where: { $0.modem.moduleIMEI == configuration.moduleIMEI })?
+                        .network.bsdName
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: draft.listenScope) { _, scope in
+            if scope == .lan {
+                lanAddress = LocalNetworkAddress.currentLANIPv4()
+                if case .none = draft.authentication {
+                    draft.authentication = .usernamePassword(username: "")
+                }
+            }
+        }
+        .onChange(of: draft.name) { _, _ in enableHint = nil }
+        .confirmationDialog(
+            L10n.tr("删除代理“%@”？", displayName),
+            isPresented: $isConfirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button(L10n.tr("删除"), role: .destructive) { delete() }
+            Button(L10n.tr("取消"), role: .cancel) {}
+        } message: {
+            Text(verbatim: L10n.tr("代理设置和钥匙串中保存的密码将被移除。"))
+        }
+    }
+
+    private var detailTab: Binding<ProxyDetailTab> {
+        Binding(
+            get: { ProxyDetailTab(rawValue: storedTab) ?? .settings },
+            set: { storedTab = $0.rawValue }
+        )
+    }
+
+    private var settingsContent: some View {
         ScrollView {
             AdaptiveGlassContainer(spacing: 18) {
                 VStack(alignment: .leading, spacing: 18) {
-                    header
                     connectionCard
                     basicInfoCard
                     listenCard
@@ -346,7 +451,8 @@ private struct ProxyEditorView: View {
                     }
                 }
             }
-            .padding(28)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 28)
             .frame(maxWidth: 760, alignment: .leading)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -356,25 +462,6 @@ private struct ProxyEditorView: View {
                 .padding(.bottom, 16)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
-        }
-        .onChange(of: draft.listenScope) { _, scope in
-            if scope == .lan {
-                lanAddress = LocalNetworkAddress.currentLANIPv4()
-                if case .none = draft.authentication {
-                    draft.authentication = .usernamePassword(username: "")
-                }
-            }
-        }
-        .onChange(of: draft.name) { _, _ in enableHint = nil }
-        .confirmationDialog(
-            L10n.tr("删除代理“%@”？", displayName),
-            isPresented: $isConfirmingDelete,
-            titleVisibility: .visible
-        ) {
-            Button(L10n.tr("删除"), role: .destructive) { delete() }
-            Button(L10n.tr("取消"), role: .cancel) {}
-        } message: {
-            Text(verbatim: L10n.tr("代理设置和钥匙串中保存的密码将被移除。"))
         }
     }
 

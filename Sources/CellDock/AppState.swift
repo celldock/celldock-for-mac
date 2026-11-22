@@ -20,6 +20,7 @@ private struct NetworkModuleRestartContext {
 final class AppState: ObservableObject {
     lazy var socksProxyController = SOCKSProxyController(appState: self)
     lazy var voWiFiController = VoWiFiController(appState: self)
+    lazy var moduleThroughputMonitor = ModuleThroughputMonitor(appState: self)
     @Published private(set) var modem = ModemSnapshot()
     @Published private(set) var euicc = EUICCSnapshot.empty
     @Published private(set) var network = CellularNetworkStatus()

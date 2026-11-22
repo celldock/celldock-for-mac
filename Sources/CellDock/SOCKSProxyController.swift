@@ -11,16 +11,61 @@ private let socksProxyLogger = Logger(
 @MainActor
 final class SOCKSProxyController: ObservableObject {
     @Published private(set) var runtimeStates: [UUID: SOCKSProxyRuntimeState] = [:]
+    /// Whether finished requests are kept in each proxy's in-memory history.
+    /// Running requests are always listed.
+    @Published var recordsRequestHistory: Bool {
+        didSet {
+            guard recordsRequestHistory != oldValue else { return }
+            defaults.set(recordsRequestHistory, forKey: Self.recordsHistoryKey)
+            requestLogs.values.forEach { $0.isRecordingHistory = recordsRequestHistory }
+        }
+    }
 
     let store: SOCKSProxyStore
     private unowned let appState: AppState
+    private let defaults: UserDefaults
     private var servers: [UUID: SOCKSProxyServer] = [:]
+    /// Kept apart from the listeners so a restart does not lose the history.
+    private var requestLogs: [UUID: SOCKSProxyRequestLog] = [:]
     private var observations: Set<AnyCancellable> = []
     private var started = false
 
-    init(appState: AppState, store: SOCKSProxyStore? = nil) {
+    private static let recordsHistoryKey = "SOCKSProxyRecordsRequestHistory.v1"
+
+    init(appState: AppState, store: SOCKSProxyStore? = nil, defaults: UserDefaults = .standard) {
         self.appState = appState
         self.store = store ?? .shared
+        self.defaults = defaults
+        recordsRequestHistory = defaults.object(forKey: Self.recordsHistoryKey) as? Bool ?? true
+    }
+
+    // MARK: Requests
+
+    /// Running requests and history of one proxy, also while it is stopped.
+    func requestSnapshot(for proxyID: UUID) -> SOCKSProxyRequestSnapshot {
+        if let server = servers[proxyID] { return server.snapshot() }
+        return requestLogs[proxyID]?.snapshot(active: []) ?? .empty
+    }
+
+    func cancelRequest(_ requestID: UUID, proxyID: UUID) {
+        servers[proxyID]?.cancel(requestID: requestID)
+    }
+
+    func clearRequestHistory(for proxyID: UUID) {
+        requestLogs[proxyID]?.clearHistory()
+    }
+
+    /// The module the proxy sends its traffic through, if it is attached.
+    func egressModuleID(for proxyID: UUID) -> CellularModuleID? {
+        guard let config = store.configurations.first(where: { $0.id == proxyID }) else { return nil }
+        return appState.attachedModuleID(forIMEI: config.moduleIMEI)
+    }
+
+    private func requestLog(for proxyID: UUID) -> SOCKSProxyRequestLog {
+        if let existing = requestLogs[proxyID] { return existing }
+        let log = SOCKSProxyRequestLog(recordsHistory: recordsRequestHistory)
+        requestLogs[proxyID] = log
+        return log
     }
 
     func start() {
@@ -79,6 +124,7 @@ final class SOCKSProxyController: ObservableObject {
         let configs = store.configurations
         let validIDs = Set(configs.map(\.id))
         for id in servers.keys where !validIDs.contains(id) { stopServer(id) }
+        for id in requestLogs.keys where !validIDs.contains(id) { requestLogs[id] = nil }
         let conflicts = Set(SOCKSProxyPortAllocator.conflicts(in: configs))
 
         for config in configs {
@@ -136,7 +182,11 @@ final class SOCKSProxyController: ObservableObject {
             return
         }
         stopServer(config.id)
-        let server = SOCKSProxyServer(configuration: config, password: password)
+        let server = SOCKSProxyServer(
+            configuration: config,
+            password: password,
+            requestLog: requestLog(for: config.id)
+        )
         server.updateBinding(binding)
         server.onConnectionCountChanged = { [weak self] count in
             DispatchQueue.main.async {
@@ -184,5 +234,68 @@ final class SOCKSProxyController: ObservableObject {
 
     private func stopServer(_ id: UUID) {
         servers.removeValue(forKey: id)?.stop()
+    }
+}
+
+/// Feeds the request tab of one proxy. It polls the controller once a second
+/// only while the tab is on screen, so a proxy with a thousand connections
+/// costs nothing while nobody is looking.
+@MainActor
+final class SOCKSProxyRequestFeed: ObservableObject {
+    @Published private(set) var snapshot = SOCKSProxyRequestSnapshot.empty
+    /// Speed of this proxy's own traffic, last 60 seconds.
+    @Published private(set) var proxyThroughput = NetworkThroughputHistory()
+    /// Time of the latest refresh, so running durations tick along.
+    @Published private(set) var now = Date()
+
+    let proxyID: UUID
+    private weak var controller: SOCKSProxyController?
+    private var timer: Timer?
+    private var rateTracker = SOCKSProxyTrafficRateTracker()
+
+    init(proxyID: UUID, controller: SOCKSProxyController) {
+        self.proxyID = proxyID
+        self.controller = controller
+    }
+
+    func start() {
+        guard timer == nil else { return }
+        rateTracker.reset()
+        proxyThroughput.removeAll()
+        refresh()
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    func refresh() {
+        guard let controller else { return }
+        let next = controller.requestSnapshot(for: proxyID)
+        if let rate = rateTracker.rate(
+            downloaded: next.totalDownloadedBytes,
+            uploaded: next.totalUploadedBytes,
+            uptime: ProcessInfo.processInfo.systemUptime
+        ) {
+            proxyThroughput.append(rate)
+        }
+        if next != snapshot { snapshot = next }
+        now = Date()
+    }
+
+    func cancel(_ requestID: UUID) {
+        controller?.cancelRequest(requestID, proxyID: proxyID)
+        refresh()
+    }
+
+    func clearHistory() {
+        controller?.clearRequestHistory(for: proxyID)
+        refresh()
     }
 }

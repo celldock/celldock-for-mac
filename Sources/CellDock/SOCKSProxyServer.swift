@@ -57,17 +57,21 @@ final class SOCKSProxyServer {
     private var listener: NWListener?
     private var sessions: [UUID: SOCKSProxySession] = [:]
     private var binding: SOCKSModuleNetworkBindingSnapshot?
+    /// Shared with the controller so the history survives a listener restart.
+    let requestLog: SOCKSProxyRequestLog
 
     init(
         configuration: SOCKSProxyConfiguration,
         password: String?,
         udpUpstreamProxy: VoWiFiUpstreamProxySnapshot? = nil,
-        localBindAddress: String? = nil
+        localBindAddress: String? = nil,
+        requestLog: SOCKSProxyRequestLog = SOCKSProxyRequestLog()
     ) {
         self.configuration = configuration
         self.password = password
         self.udpUpstreamProxy = udpUpstreamProxy
         self.localBindAddress = localBindAddress
+        self.requestLog = requestLog
         queue = DispatchQueue(label: "app.celldock.socks.\(configuration.id.uuidString)")
     }
 
@@ -151,7 +155,31 @@ final class SOCKSProxyServer {
         active.forEach {
             $0.onClose = nil
             $0.stop()
+            requestLog.archive($0.tracker.finish(.completed))
         }
+    }
+
+    // MARK: Requests
+
+    /// Running requests plus the in-memory history. Taken under the session
+    /// lock so that a session finishing at the same moment is counted exactly
+    /// once in the totals.
+    func snapshot() -> SOCKSProxyRequestSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestLog.snapshot(active: sessions.values.map(\.tracker))
+    }
+
+    /// Ends one running request at the user's request.
+    func cancel(requestID: UUID) {
+        lock.lock()
+        let session = sessions[requestID]
+        lock.unlock()
+        session?.stop(outcome: .disconnected)
+    }
+
+    func clearHistory() {
+        requestLog.clearHistory()
     }
 
     private func accept(_ connection: NWConnection) {
@@ -168,16 +196,25 @@ final class SOCKSProxyServer {
         lock.lock()
         let isFull = sessions.count >= SOCKSProxyLimits.maximumSessionsPerProxy
         lock.unlock()
+        let client = Self.clientDescription(connection.endpoint)
         guard !isFull else {
             socksServerLogger.error(
                 "Refusing connection: session limit reached proxy=\(self.configuration.name, privacy: .public)"
             )
+            var refused = SOCKSProxyRequestRecord(client: client)
+            refused.outcome = .sessionLimitReached
+            refused.endedAt = refused.startedAt
+            requestLog.archive(refused)
             connection.cancel()
             return
         }
         let id = UUID()
+        let tracker = SOCKSProxyRequestTracker(
+            record: SOCKSProxyRequestRecord(id: id, client: client)
+        )
         let session = SOCKSProxySession(
             connection: connection,
+            tracker: tracker,
             authentication: configuration.authentication,
             password: password,
             binding: binding,
@@ -189,6 +226,7 @@ final class SOCKSProxyServer {
             guard let self else { return }
             self.lock.lock()
             self.sessions[id] = nil
+            self.requestLog.archive(tracker.finish(.completed))
             let count = self.sessions.count
             self.lock.unlock()
             self.onConnectionCountChanged?(count)
@@ -200,12 +238,27 @@ final class SOCKSProxyServer {
         onConnectionCountChanged?(count)
         session.start()
     }
+
+    private static func clientDescription(_ endpoint: NWEndpoint) -> String {
+        guard case let .hostPort(host, port) = endpoint else { return "\(endpoint)" }
+        let hostText: String
+        switch host {
+        case let .ipv4(address): hostText = "\(address)"
+        case let .ipv6(address): hostText = "\(address)"
+        case let .name(name, _): hostText = name
+        @unknown default: hostText = "\(host)"
+        }
+        // Drop an interface scope such as "%en0"; it only adds noise.
+        let unscoped = hostText.split(separator: "%", maxSplits: 1).first.map(String.init) ?? hostText
+        return SOCKSProxyRequestFormatting.endpoint(host: unscoped, port: port.rawValue)
+    }
 }
 
 private final class SOCKSProxySession {
     private static let queueKey = DispatchSpecificKey<UUID>()
 
     var onClose: (() -> Void)?
+    let tracker: SOCKSProxyRequestTracker
 
     private enum Phase { case methods, authentication, request, relaying, udpRelaying, closed }
     private let connection: NWConnection
@@ -242,6 +295,7 @@ private final class SOCKSProxySession {
 
     init(
         connection: NWConnection,
+        tracker: SOCKSProxyRequestTracker,
         authentication: SOCKSProxyConfiguration.Authentication,
         password: String?,
         binding: SOCKSModuleNetworkBindingSnapshot,
@@ -250,6 +304,7 @@ private final class SOCKSProxySession {
         queue: DispatchQueue
     ) {
         self.connection = connection
+        self.tracker = tracker
         self.authentication = authentication
         self.password = password
         self.binding = binding
@@ -274,7 +329,7 @@ private final class SOCKSProxySession {
             switch self.phase {
             case .methods, .authentication, .request:
                 socksServerLogger.info("SOCKS handshake timed out")
-                self.finish()
+                self.finish(.handshakeTimedOut)
             case .relaying, .udpRelaying, .closed:
                 break
             }
@@ -284,14 +339,14 @@ private final class SOCKSProxySession {
         connection.start(queue: queue)
     }
 
-    func stop() {
+    func stop(outcome: SOCKSProxyRequestOutcome = .completed) {
         // Complete source cleanup before the server releases its final strong
         // reference to this session. Avoid sync-to-self if stop() is ever called
         // from a callback already running on the session queue.
         if DispatchQueue.getSpecific(key: Self.queueKey) == queueID {
-            finish()
+            finish(outcome)
         } else {
-            queue.sync { finish() }
+            queue.sync { finish(outcome) }
         }
     }
 
@@ -310,7 +365,7 @@ private final class SOCKSProxySession {
                 socksServerLogger.error(
                     "SOCKS handshake rejected error=\(String(describing: error), privacy: .public)"
                 )
-                self.finish()
+                self.finish(.failed)
             }
         }
     }
@@ -328,7 +383,7 @@ private final class SOCKSProxySession {
             }
             guard selection.methods.contains(required.rawValue) else {
                 send(SOCKSProtocol.encodeMethodSelectionResponse(.noAcceptableMethods)) {
-                    self.finish()
+                    self.finish(.authenticationFailed)
                 }
                 return true
             }
@@ -352,7 +407,7 @@ private final class SOCKSProxySession {
                 socksServerLogger.error("SOCKS authentication rejected")
             }
             send(SOCKSProtocol.encodeUsernamePasswordResponse(succeeded: accepted)) {
-                guard accepted else { self.finish(); return }
+                guard accepted else { self.finish(.authenticationFailed); return }
                 self.phase = .request
                 do {
                     if try !self.consumeHandshake() { self.readHandshake() }
@@ -365,14 +420,23 @@ private final class SOCKSProxySession {
             let request = try SOCKSProtocol.decodeRequest(buffer)
             consume(request.consumedByteCount)
             if request.command == SOCKSCommand.connect.rawValue {
+                tracker.setRequest(
+                    command: .tcpConnect,
+                    target: SOCKSProxyRequestFormatting.endpoint(request.address, port: request.port),
+                    resolvedAddress: {
+                        if case .domain = request.address { return nil }
+                        return SOCKSProxyRequestFormatting.host(request.address)
+                    }()
+                )
                 openUpstream(for: request)
                 return true
             }
             if request.command == SOCKSCommand.udpAssociate.rawValue {
+                tracker.setRequest(command: .udpAssociate, target: nil)
                 openUDPAssociation()
                 return true
             }
-            sendReply(.commandNotSupported) { self.finish() }
+            sendReply(.commandNotSupported) { self.finish(.failed) }
             return true
         case .relaying, .udpRelaying, .closed:
             return true
@@ -395,6 +459,17 @@ private final class SOCKSProxySession {
         )
         udpRelay = relay
         relay.onFailure = { [weak self] _ in self?.finish() }
+        // Both callbacks run on this session's queue.
+        relay.onTraffic = { [tracker] downloaded, uploaded in
+            tracker.addDownloaded(downloaded)
+            tracker.addUploaded(uploaded)
+        }
+        relay.onDestination = { [tracker] address, port, resolved in
+            tracker.noteUDPDestination(
+                target: SOCKSProxyRequestFormatting.endpoint(address, port: port),
+                resolvedAddress: resolved.map(SOCKSProxyRequestFormatting.host)
+            )
+        }
         relay.start { [weak self] result in
             guard let self, self.phase != .closed else { return }
             switch result {
@@ -407,7 +482,7 @@ private final class SOCKSProxySession {
                 )) ?? Data()
                 self.send(reply) { self.readUDPControlConnection() }
             case .failure:
-                self.sendReply(.generalFailure) { self.finish() }
+                self.sendReply(.generalFailure) { self.finish(.failed) }
             }
         }
     }
@@ -453,6 +528,7 @@ private final class SOCKSProxySession {
                     addresses = [request.address]
                 }
                 var connected: BoundSocket?
+                var connectedAddress: SOCKSAddress?
                 var lastError: Error = SOCKSDNSError.noAddresses
                 for address in addresses {
                     do {
@@ -476,10 +552,14 @@ private final class SOCKSProxySession {
                         )
                         try socket.setNonBlocking()
                         connected = socket
+                        connectedAddress = address
                         break
                     } catch { lastError = error }
                 }
                 guard let connected else { throw lastError }
+                if let connectedAddress {
+                    self.tracker.setResolvedAddress(SOCKSProxyRequestFormatting.host(connectedAddress))
+                }
                 self.queue.async {
                     guard self.phase != .closed else { connected.close(); return }
                     self.upstream = connected
@@ -500,7 +580,10 @@ private final class SOCKSProxySession {
                     port=\(request.port) error=\(String(describing: error), privacy: .public)
                     """
                 )
-                self.queue.async { self.sendReply(self.reply(for: error)) { self.finish() } }
+                let outcome = SOCKSProxyRequestOutcome.upstreamFailure(error)
+                self.queue.async {
+                    self.sendReply(self.reply(for: error)) { self.finish(outcome) }
+                }
             }
         }
     }
@@ -551,6 +634,7 @@ private final class SOCKSProxySession {
                 closeClientWriteSide()
             case let .data(data):
                 lastRelayActivity = DispatchTime.now()
+                tracker.addDownloaded(data.count)
                 // Hold off further upstream reads until the client has taken
                 // these bytes, so a slow client cannot make us buffer without
                 // bound.
@@ -607,6 +691,7 @@ private final class SOCKSProxySession {
             do {
                 let written = try upstream.write(pendingUpstream)
                 guard written > 0 else { break }
+                tracker.addUploaded(written)
                 // Rebase rather than removeFirst: the latter only advances
                 // startIndex, so the consumed prefix would stay resident for the
                 // life of the connection. Partial writes only occur under
@@ -736,9 +821,12 @@ private final class SOCKSProxySession {
         upstream = nil
     }
 
-    private func finish() {
+    /// `outcome` is recorded only by the first call; a session that reached
+    /// the relay and then ends without a specific reason simply completed.
+    private func finish(_ outcome: SOCKSProxyRequestOutcome = .completed) {
         guard phase != .closed else { return }
         phase = .closed
+        tracker.finish(outcome)
         handshakeTimer?.cancel()
         handshakeTimer = nil
         halfClosedTimer?.cancel()

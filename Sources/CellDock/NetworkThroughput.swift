@@ -17,6 +17,39 @@ struct NetworkThroughput: Equatable {
     )
 }
 
+/// The most recent per-second samples, oldest first. Used for the live speed
+/// charts; nothing is persisted.
+struct NetworkThroughputHistory: Equatable {
+    static let defaultCapacity = 60
+
+    let capacity: Int
+    private(set) var samples: [NetworkThroughput] = []
+
+    init(capacity: Int = NetworkThroughputHistory.defaultCapacity) {
+        self.capacity = max(1, capacity)
+    }
+
+    var latest: NetworkThroughput? { samples.last }
+
+    mutating func append(_ sample: NetworkThroughput) {
+        samples.append(sample)
+        if samples.count > capacity {
+            samples.removeFirst(samples.count - capacity)
+        }
+    }
+
+    mutating func removeAll() {
+        samples.removeAll()
+    }
+
+    /// The largest value in either direction, for scaling a chart.
+    var peakBytesPerSecond: Double {
+        samples.reduce(0) {
+            max($0, $1.downloadBytesPerSecond, $1.uploadBytesPerSecond)
+        }
+    }
+}
+
 enum NetworkThroughputCalculator {
     static func rates(
         previous: NetworkInterfaceByteCounters,
@@ -77,6 +110,34 @@ enum NetworkSpeedFormatter {
             detailed(throughput.downloadBytesPerSecond),
             detailed(throughput.uploadBytesPerSecond)
         )
+    }
+
+    /// "↓2.4M ↑320K", for a module's list header.
+    static func compactPair(_ throughput: NetworkThroughput) -> String {
+        "↓" + compact(throughput.downloadBytesPerSecond) +
+            " ↑" + compact(throughput.uploadBytesPerSecond)
+    }
+
+    /// "2.4 MB/s".
+    static func rate(_ bytesPerSecond: Double) -> String {
+        detailed(bytesPerSecond)
+    }
+
+    /// A transferred amount such as "48.2 MB"; "—" for nothing.
+    static func byteCount(_ bytes: UInt64) -> String {
+        guard bytes > 0 else { return "—" }
+        let value = Double(bytes)
+        let divisor: Double
+        let unit: String
+        switch value {
+        case 1_000_000_000...: divisor = 1_000_000_000; unit = "GB"
+        case 1_000_000...: divisor = 1_000_000; unit = "MB"
+        case 1_000...: divisor = 1_000; unit = "KB"
+        default: divisor = 1; unit = "B"
+        }
+        let scaledValue = value / divisor
+        let decimals = divisor == 1 ? 0 : (divisor >= 1_000_000_000 ? 2 : (scaledValue < 100 ? 1 : 0))
+        return formattedNumber(scaledValue, decimals: decimals) + " " + unit
     }
 
     private static func compact(_ bytesPerSecond: Double) -> String {
