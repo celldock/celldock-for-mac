@@ -3749,6 +3749,42 @@ do {
             readyModule.selectorTitle == "模组 1 · 中国移动 · 5G",
         "ready cellular module presentation changed unexpectedly"
     )
+    // A selector that is short of room steps down through these instead of
+    // cutting the full title off.
+    let dualSlotModule = CellularModuleSummary(
+        id: moduleOneID,
+        displayName: "模组 1",
+        modem: ModemSnapshot(
+            state: .connected,
+            operatorName: "中国电信",
+            accessTechnology: "LTE",
+            simState: .ready,
+            simSlot: 1,
+            simSlotSwitchingSupported: true
+        ),
+        network: CellularNetworkStatus(isEnabled: true, isActive: true),
+        cardKind: .physicalSIM,
+        isActiveSession: true,
+        isPrimaryData: false
+    )
+    let cardlessModule = CellularModuleSummary(
+        id: moduleOneID,
+        displayName: "模组 1",
+        modem: ModemSnapshot(state: .connected),
+        network: CellularNetworkStatus(isEnabled: true, isActive: true),
+        cardKind: .physicalSIM,
+        isActiveSession: true,
+        isPrimaryData: false
+    )
+    try expect(
+        readyModule.selectorTitleVariants == ["模组 1 · 中国移动 · 5G", "模组 1 · 中国移动", "模组 1"] &&
+            dualSlotModule.selectorTitleVariants == [
+                "模组 1 · 卡槽 1 · 中国电信 · LTE", "模组 1 · 卡槽 1 · 中国电信", "模组 1 · 卡槽 1",
+            ] &&
+            dualSlotModule.selectorTitleVariants.first == dualSlotModule.selectorTitle &&
+            cardlessModule.selectorTitleVariants == ["模组 1"],
+        "the selector title does not shorten by dropping technology, then carrier"
+    )
 
     let dataReadyModule = CellularModuleSummary(
         id: moduleOneID,

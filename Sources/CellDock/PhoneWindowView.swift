@@ -166,47 +166,20 @@ struct CommunicationModuleStatusMenu: View {
         Button {
             isPopoverPresented.toggle()
         } label: {
-            HStack(spacing: 8) {
-                CommunicationModuleSignalBars(
-                    bars: isViewingOffline ? 0 : (selectedModule?.modem.signalBars ?? 0),
-                    hasSignal: !isViewingOffline && selectedModuleHasSignal,
-                    tint: selectedModuleHasSignal ? .green : .secondary,
-                    barWidth: 2.5,
-                    spacing: 1.5
-                )
-                .frame(width: 14, height: 18)
-                .accessibilityHidden(true)
-
-                Text(pickerTitle)
-                    .foregroundStyle(isViewingOffline ? Color.secondary : Color.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-                Spacer(minLength: 4)
-
-                if hasAttentionElsewhere {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 7, height: 7)
-                        .help(L10n.tr("其他线路有未读短信或未接来电"))
-                        .accessibilityLabel(L10n.tr("其他线路有未读短信或未接来电"))
-                }
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.appSymbol(.indicator, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
-            }
-            .font(.appCallout)
-            .padding(.horizontal, 12)
-            .frame(width: 210, height: 36)
+            LineSelectorLabel(
+                titles: pickerTitles,
+                signalBars: selectedModule?.modem.signalBars ?? 0,
+                hasSignal: selectedModuleHasSignal,
+                isOffline: isViewingOffline,
+                showsAttention: hasAttentionElsewhere
+            )
             .contentShape(
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                RoundedRectangle(cornerRadius: LineSelectorLabel.cornerRadius, style: .continuous)
             )
         }
         .buttonStyle(.plain)
         .adaptiveGlassSurface(
-            cornerRadius: 15,
+            cornerRadius: LineSelectorLabel.cornerRadius,
             treatment: .regular,
             isInteractive: true
         )
@@ -550,12 +523,21 @@ struct CommunicationModuleStatusMenu: View {
         return total > appState.attentionCount(in: scope)
     }
 
-    private var pickerTitle: String {
+    /// The selector's title from the most to the least detailed. The label
+    /// shows the longest one that fits.
+    private var pickerTitles: [String] {
         if isViewingOffline {
-            return L10n.tr("%@ · 离线，仅查看", appState.lineScope.appearance.title)
+            let title = appState.lineScope.appearance.title
+            return [L10n.tr("%@ · 离线，仅查看", title), L10n.tr("%@ · 离线", title), title]
         }
-        return appState.currentCommunicationModule?.selectorTitle ??
-            (appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组"))
+        if let module = appState.currentCommunicationModule {
+            return module.selectorTitleVariants
+        }
+        return [appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组")]
+    }
+
+    private var pickerTitle: String {
+        pickerTitles.first ?? ""
     }
 
     private var selectedModule: CellularModuleSummary? {
@@ -582,34 +564,6 @@ struct CommunicationModuleStatusMenu: View {
         if let suffix = module.simSuffix { parts.append(L10n.tr("尾号 %@", suffix)) }
         if parts.isEmpty { parts.append(module.statusText) }
         return parts.joined(separator: " · ")
-    }
-}
-
-private struct CommunicationModuleSignalBars: View {
-    let bars: Int
-    let hasSignal: Bool
-    let tint: Color
-    let barWidth: CGFloat
-    let spacing: CGFloat
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: spacing) {
-            ForEach(0 ..< 4, id: \.self) { index in
-                Capsule()
-                    .fill(barColor(at: index))
-                    .frame(
-                        width: barWidth,
-                        height: CGFloat(5 + index * 3)
-                    )
-            }
-        }
-    }
-
-    private func barColor(at index: Int) -> Color {
-        guard hasSignal else { return Color.secondary.opacity(0.20) }
-        return index < min(max(bars, 0), 4)
-            ? tint
-            : tint.opacity(0.20)
     }
 }
 

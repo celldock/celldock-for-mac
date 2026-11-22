@@ -54,6 +54,26 @@ struct CellularModuleSummary: Identifiable, Equatable {
             .joined(separator: " · ")
     }
 
+    /// The selector title from the most to the least detailed. A control
+    /// that is short of room shows the longest one that fits instead of
+    /// cutting the full title off: first without the radio technology, then
+    /// with only what identifies the line.
+    var selectorTitleVariants: [String] {
+        let identity = [localizedDisplayName, simSlotTitle].compactMap { $0 }
+        let carrier = modem.simReady ? carrierName : nil
+        let candidates = [
+            identity + [carrier, technologyName].compactMap { $0 },
+            identity + [carrier].compactMap { $0 },
+            identity,
+        ]
+        var variants: [String] = []
+        for parts in candidates {
+            let title = parts.joined(separator: " · ")
+            if variants.last != title { variants.append(title) }
+        }
+        return variants
+    }
+
     var accessibilitySummary: String {
         var parts = [localizedDisplayName, statusText]
         if modem.simReady {
