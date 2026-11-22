@@ -614,6 +614,20 @@ struct SIMManagementView: View {
         appState.euiccSnapshot(for: selectedModuleID)
     }
 
+    private var selectedCallSnapshot: CallSnapshot {
+        appState.callSnapshot(for: selectedModuleID)
+    }
+
+    private var shouldShowVoiceInitializationAction: Bool {
+        if selectedCallSnapshot.controlInterfaceBusy {
+            return true
+        }
+        if case .initializationFailed = selectedModem.voiceCapability {
+            return true
+        }
+        return false
+    }
+
     private var connectedModuleCount: Int {
         appState.cellularModules.lazy.filter { $0.modem.isConnected }.count
     }
@@ -1823,6 +1837,30 @@ struct SIMManagementView: View {
                 value: voiceCapabilityText,
                 valueColor: voiceCapabilityColor
             )
+            if selectedModem.isConnected, shouldShowVoiceInitializationAction {
+                HStack {
+                    Spacer()
+                    if selectedCallSnapshot.controlInterfaceBusy {
+                        Button(role: .destructive) {
+                            appState.forceReleaseCallControlInterface(for: selectedModuleID)
+                        } label: {
+                            Label(L10n.tr("结束占用并重试"), systemImage: "xmark.app.fill")
+                        }
+                        .help(L10n.tr("只结束当前占用模块 ADB 接口的应用，然后重试电话初始化"))
+                        .adaptiveGlassButton()
+                        .controlSize(.small)
+                        .disabled(appState.isChangingCall)
+                    } else {
+                        Button(L10n.tr("重试初始化")) {
+                            appState.retryCallInitialization(for: selectedModuleID)
+                        }
+                        .adaptiveGlassButton()
+                        .controlSize(.small)
+                        .disabled(appState.isChangingCall)
+                    }
+                }
+                .padding(.bottom, 10)
+            }
             Divider()
             informationRow(title: "语音实现", value: voiceBackendText)
             Divider()

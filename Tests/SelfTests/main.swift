@@ -4177,6 +4177,53 @@ do {
             ModuleVoiceInitializationRetryPolicy.delay(forCompletedAttempts: 5) == nil,
         "module voice initialization retry schedule changed unexpectedly"
     )
+    let appErrorText = L10n.error(
+        "QDC507 通话组件尚不可用：%@",
+        underlying: ADBWire.ProtocolError.invalidHeader
+    )
+    try expect(
+        appErrorText.contains("ADB 消息头无效。") && !appErrorText.contains("错误代码"),
+        "L10n.error dropped AppLocalizedError description: \(appErrorText)"
+    )
+    let externalErrorText = L10n.error(
+        "QDC507 通话组件尚不可用：%@",
+        underlying: NSError(domain: "ExternalTestDomain", code: 42)
+    )
+    try expect(
+        externalErrorText.contains("ExternalTestDomain") && externalErrorText.contains("42"),
+        "L10n.error did not keep domain/code reference for external error: \(externalErrorText)"
+    )
+    let busyWithOwnerRetry = ModuleVoiceInitializationRetryPolicy.busyMessage(
+        ownerName: "adb",
+        processID: 3587,
+        retryAttempt: 2
+    )
+    let busyWithoutOwnerRetry = ModuleVoiceInitializationRetryPolicy.busyMessage(
+        ownerName: nil,
+        processID: nil,
+        retryAttempt: 3
+    )
+    let busyWithOwnerFinal = ModuleVoiceInitializationRetryPolicy.busyMessage(
+        ownerName: "adb",
+        processID: 3587,
+        retryAttempt: nil
+    )
+    let busyWithoutOwnerFinal = ModuleVoiceInitializationRetryPolicy.busyMessage(
+        ownerName: nil,
+        processID: nil,
+        retryAttempt: nil
+    )
+    try expect(
+        busyWithOwnerRetry?.contains("adb") == true &&
+            busyWithOwnerRetry?.contains("3587") == true &&
+            busyWithOwnerRetry?.contains("2/5") == true &&
+            busyWithoutOwnerRetry?.contains("3/5") == true &&
+            busyWithOwnerFinal?.contains("adb") == true &&
+            busyWithOwnerFinal?.contains("3587") == true &&
+            busyWithOwnerFinal?.contains("结束占用并重试") == true &&
+            busyWithoutOwnerFinal == nil,
+        "ADB interface busy messages did not format owner and retry state as expected"
+    )
     try expect(
         !NetworkAddressClassifier.isUsableIPv4("169.254.10.30"),
         "self-assigned IPv4 address was treated as usable cellular data"

@@ -10,7 +10,7 @@ final class ModuleVoiceRuntime {
 #endif
     }
 
-    enum RuntimeError: LocalizedError {
+    enum RuntimeError: AppLocalizedError {
         case resourcesMissing
         case invalidManifest(String)
         case componentMissing(String)

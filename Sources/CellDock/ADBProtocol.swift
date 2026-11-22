@@ -22,7 +22,7 @@ enum ADBWire {
         let status: Int
     }
 
-    enum ProtocolError: LocalizedError {
+    enum ProtocolError: AppLocalizedError {
         case invalidHeader
         case invalidPayload
         case missingExitMarker

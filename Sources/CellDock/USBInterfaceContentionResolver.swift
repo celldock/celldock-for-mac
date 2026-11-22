@@ -24,8 +24,13 @@ struct USBInterfaceReleaseResult {
     }
 }
 
+struct USBInterfaceOwner: Equatable {
+    let processName: String
+    let processID: pid_t
+}
+
 enum USBInterfaceContentionResolver {
-    static func forceReleaseADBInterface(locationID: UInt32) -> USBInterfaceReleaseResult? {
+    static func adbInterfaceOwner(locationID: UInt32) -> USBInterfaceOwner? {
         var processID: Int32 = 0
         var nameBytes = [CChar](repeating: 0, count: 192)
         let found = nameBytes.withUnsafeMutableBufferPointer { buffer in
@@ -39,7 +44,13 @@ enum USBInterfaceContentionResolver {
         }
         guard found == 1, processID > 0 else { return nil }
         let ownerName = String(cString: nameBytes)
-        let pid = pid_t(processID)
+        return USBInterfaceOwner(processName: ownerName, processID: pid_t(processID))
+    }
+
+    static func forceReleaseADBInterface(locationID: UInt32) -> USBInterfaceReleaseResult? {
+        guard let owner = adbInterfaceOwner(locationID: locationID) else { return nil }
+        let ownerName = owner.processName
+        let pid = owner.processID
         guard pid != getpid() else {
             return USBInterfaceReleaseResult(
                 ownerName: ownerName,

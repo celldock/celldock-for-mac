@@ -195,7 +195,7 @@ final class AppState: ObservableObject {
     private var secondaryModemServices: [UInt32: ModemService] = [:]
     private var secondaryEUICCServices: [UInt32: EUICCService] = [:]
     private var secondaryEUICCProbeIdentities: [UInt32: String] = [:]
-    private var moduleCallSnapshots: [CellularModuleID: CallSnapshot] = [:]
+    @Published private(set) var moduleCallSnapshots: [CellularModuleID: CallSnapshot] = [:]
     private var activeCallModuleID: CellularModuleID?
     private var sendingMessageModuleIDs: Set<CellularModuleID> = []
     private lazy var euiccService = EUICCService(modemService: modemService)
@@ -1498,10 +1498,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    func retryCallInitialization() {
+    func callSnapshot(for moduleID: CellularModuleID?) -> CallSnapshot {
+        if let moduleID, let snapshot = moduleCallSnapshots[moduleID] {
+            return snapshot
+        }
+        return call
+    }
+
+    func retryCallInitialization(for moduleID: CellularModuleID? = nil) {
         guard !isChangingCall else { return }
-        let moduleID = activeCallModuleID ?? currentCommunicationModuleID
-        guard let service = modemService(for: moduleID) else {
+        let targetModuleID = moduleID ?? activeCallModuleID ?? currentCommunicationModuleID
+        guard let service = modemService(for: targetModuleID) else {
             presentTransientMessage(L10n.tr("所选通信模组尚未就绪。"), isError: true)
             return
         }
@@ -1514,10 +1521,11 @@ final class AppState: ObservableObject {
         }
     }
 
-    func forceReleaseCallControlInterface() {
-        guard !isChangingCall, call.controlInterfaceBusy else { return }
-        let moduleID = activeCallModuleID ?? call.moduleID ?? currentCommunicationModuleID
-        guard let service = modemService(for: moduleID) else {
+    func forceReleaseCallControlInterface(for moduleID: CellularModuleID? = nil) {
+        let targetCall = moduleID.map { callSnapshot(for: $0) } ?? call
+        guard !isChangingCall, targetCall.controlInterfaceBusy else { return }
+        let targetModuleID = moduleID ?? activeCallModuleID ?? call.moduleID ?? currentCommunicationModuleID
+        guard let service = modemService(for: targetModuleID) else {
             presentTransientMessage(L10n.tr("通话模组已断开。"), isError: true)
             return
         }

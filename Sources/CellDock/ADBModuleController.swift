@@ -8,7 +8,7 @@ final class ADBModuleController {
         let status: Int
     }
 
-    enum ControllerError: LocalizedError {
+    enum ControllerError: AppLocalizedError {
         case openFailed(String)
         case interfaceBusy
         case transport(String)
