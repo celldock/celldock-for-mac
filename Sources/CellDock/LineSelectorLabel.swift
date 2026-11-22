@@ -1,13 +1,34 @@
 import SwiftUI
 
+/// The words on the line selector: which line, and what is known about it.
+struct LineSelectorTitle: Equatable {
+    /// Everything on one line: "模组 1 · 卡槽 1 · 中国电信 · LTE".
+    let full: String
+    /// What identifies the line: "模组 1 · 卡槽 1".
+    let line: String
+    /// The rest: "中国电信 · LTE". nil when the line's name is all there is.
+    let detail: String?
+
+    init(full: String, line: String, detail: String?) {
+        self.full = full
+        self.line = line
+        self.detail = detail
+    }
+
+    /// A title with nothing to split off, such as "没有可用模组".
+    init(_ text: String) {
+        self.init(full: text, line: text, detail: nil)
+    }
+}
+
 /// What the line selector at the bottom of the sidebar shows: signal, the
 /// line's title and a mark when another line needs attention.
 ///
-/// It is as wide as the sidebar lets it be. When the full title still does
-/// not fit, it shows a shorter one instead of cutting the text off.
+/// It is as wide as the sidebar. The title stays on one line while it fits;
+/// in a narrower sidebar it takes two lines, the line's name over its
+/// carrier and network, rather than being cut off.
 struct LineSelectorLabel: View {
-    /// The title from the most to the least detailed.
-    let titles: [String]
+    let title: LineSelectorTitle
     let signalBars: Int
     let hasSignal: Bool
     /// An offline line is only being looked at: grey title, no signal.
@@ -15,7 +36,7 @@ struct LineSelectorLabel: View {
     /// Another line has unread messages or missed calls.
     var showsAttention = false
 
-    static let height: CGFloat = 36
+    static let minimumHeight: CGFloat = 36
     static let cornerRadius: CGFloat = 15
 
     var body: some View {
@@ -31,17 +52,18 @@ struct LineSelectorLabel: View {
             .accessibilityHidden(true)
 
             ViewThatFits(in: .horizontal) {
-                ForEach(Array(titles.enumerated()), id: \.offset) { _, title in
-                    Text(verbatim: title)
-                        .lineLimit(1)
-                }
-                // Not even the shortest fits: show it cut off.
-                Text(verbatim: titles.last ?? "")
+                Text(verbatim: title.full)
+                    .foregroundStyle(isOffline ? Color.secondary : Color.primary)
                     .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(minWidth: 0)
+
+                if title.detail != nil {
+                    twoLines
+                }
+
+                // Not even two lines fit: cut them off.
+                twoLines
+                    .frame(minWidth: 0, alignment: .leading)
             }
-            .foregroundStyle(isOffline ? Color.secondary : Color.primary)
             .layoutPriority(1)
 
             Spacer(minLength: 4)
@@ -61,8 +83,23 @@ struct LineSelectorLabel: View {
         }
         .font(.appCallout)
         .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .frame(height: Self.height)
+        .frame(minHeight: Self.minimumHeight)
+    }
+
+    private var twoLines: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(verbatim: title.line)
+                .foregroundStyle(isOffline ? Color.secondary : Color.primary)
+                .lineLimit(1)
+            if let detail = title.detail {
+                Text(verbatim: detail)
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
     }
 }
 

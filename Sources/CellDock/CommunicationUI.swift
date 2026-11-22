@@ -198,8 +198,9 @@ private struct CommunicationModuleFloatingSidebarModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Room for the selector when its title takes two lines.
                 Color.clear
-                    .frame(height: 48)
+                    .frame(height: 54)
                     .allowsHitTesting(false)
             }
             .overlay(alignment: .bottom) {

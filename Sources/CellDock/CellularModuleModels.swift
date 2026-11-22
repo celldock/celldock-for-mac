@@ -54,24 +54,18 @@ struct CellularModuleSummary: Identifiable, Equatable {
             .joined(separator: " · ")
     }
 
-    /// The selector title from the most to the least detailed. A control
-    /// that is short of room shows the longest one that fits instead of
-    /// cutting the full title off: first without the radio technology, then
-    /// with only what identifies the line.
-    var selectorTitleVariants: [String] {
-        let identity = [localizedDisplayName, simSlotTitle].compactMap { $0 }
-        let carrier = modem.simReady ? carrierName : nil
-        let candidates = [
-            identity + [carrier, technologyName].compactMap { $0 },
-            identity + [carrier].compactMap { $0 },
-            identity,
-        ]
-        var variants: [String] = []
-        for parts in candidates {
-            let title = parts.joined(separator: " · ")
-            if variants.last != title { variants.append(title) }
-        }
-        return variants
+    /// What identifies the line in a selector: "模组 1 · 卡槽 1".
+    var selectorLineTitle: String {
+        [localizedDisplayName, simSlotTitle]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    /// The rest of the selector title, "中国电信 · LTE", for a control that
+    /// puts it on a second line. nil while there is no carrier or network.
+    var selectorDetail: String? {
+        let parts = [modem.simReady ? carrierName : nil, technologyName].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     var accessibilitySummary: String {

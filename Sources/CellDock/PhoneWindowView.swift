@@ -167,7 +167,7 @@ struct CommunicationModuleStatusMenu: View {
             isPopoverPresented.toggle()
         } label: {
             LineSelectorLabel(
-                titles: pickerTitles,
+                title: pickerLabel,
                 signalBars: selectedModule?.modem.signalBars ?? 0,
                 hasSignal: selectedModuleHasSignal,
                 isOffline: isViewingOffline,
@@ -523,21 +523,29 @@ struct CommunicationModuleStatusMenu: View {
         return total > appState.attentionCount(in: scope)
     }
 
-    /// The selector's title from the most to the least detailed. The label
-    /// shows the longest one that fits.
-    private var pickerTitles: [String] {
+    private var pickerLabel: LineSelectorTitle {
         if isViewingOffline {
             let title = appState.lineScope.appearance.title
-            return [L10n.tr("%@ · 离线，仅查看", title), L10n.tr("%@ · 离线", title), title]
+            return LineSelectorTitle(
+                full: L10n.tr("%@ · 离线，仅查看", title),
+                line: title,
+                detail: L10n.tr("离线，仅查看")
+            )
         }
         if let module = appState.currentCommunicationModule {
-            return module.selectorTitleVariants
+            return LineSelectorTitle(
+                full: module.selectorTitle,
+                line: module.selectorLineTitle,
+                detail: module.selectorDetail
+            )
         }
-        return [appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组")]
+        return LineSelectorTitle(
+            appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组")
+        )
     }
 
     private var pickerTitle: String {
-        pickerTitles.first ?? ""
+        pickerLabel.full
     }
 
     private var selectedModule: CellularModuleSummary? {

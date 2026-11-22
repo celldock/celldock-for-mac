@@ -1805,7 +1805,7 @@
 "卡槽未启用" = "SIM Slot Not Active";
 "模组已拔出" = "Module Unplugged";
 "%@ · 离线，仅查看" = "%@ · Offline, View Only";
-"%@ · 离线" = "%@ · Offline";
+"离线，仅查看" = "Offline, View Only";
 "重命名…" = "Rename…";
 "移除…" = "Remove…";
 "重命名线路" = "Rename Line";

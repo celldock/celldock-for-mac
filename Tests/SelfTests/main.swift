@@ -3749,8 +3749,8 @@ do {
             readyModule.selectorTitle == "模组 1 · 中国移动 · 5G",
         "ready cellular module presentation changed unexpectedly"
     )
-    // A selector that is short of room steps down through these instead of
-    // cutting the full title off.
+    // A selector that is short of room puts the title on two lines, the
+    // line's name over its carrier and network, instead of cutting it off.
     let dualSlotModule = CellularModuleSummary(
         id: moduleOneID,
         displayName: "模组 1",
@@ -3777,13 +3777,13 @@ do {
         isPrimaryData: false
     )
     try expect(
-        readyModule.selectorTitleVariants == ["模组 1 · 中国移动 · 5G", "模组 1 · 中国移动", "模组 1"] &&
-            dualSlotModule.selectorTitleVariants == [
-                "模组 1 · 卡槽 1 · 中国电信 · LTE", "模组 1 · 卡槽 1 · 中国电信", "模组 1 · 卡槽 1",
-            ] &&
-            dualSlotModule.selectorTitleVariants.first == dualSlotModule.selectorTitle &&
-            cardlessModule.selectorTitleVariants == ["模组 1"],
-        "the selector title does not shorten by dropping technology, then carrier"
+        readyModule.selectorLineTitle == "模组 1" && readyModule.selectorDetail == "中国移动 · 5G" &&
+            dualSlotModule.selectorLineTitle == "模组 1 · 卡槽 1" &&
+            dualSlotModule.selectorDetail == "中国电信 · LTE" &&
+            dualSlotModule.selectorTitle == "模组 1 · 卡槽 1 · 中国电信 · LTE" &&
+            cardlessModule.selectorLineTitle == "模组 1" && cardlessModule.selectorDetail == nil &&
+            cardlessModule.selectorTitle == "模组 1",
+        "the selector title does not split into the line's name and its carrier and network"
     )
 
     let dataReadyModule = CellularModuleSummary(

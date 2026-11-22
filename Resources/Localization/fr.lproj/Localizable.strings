@@ -1802,7 +1802,7 @@
 "卡槽未启用" = "Emplacement SIM inactif";
 "模组已拔出" = "Module débranché";
 "%@ · 离线，仅查看" = "%@ · Hors ligne, lecture seule";
-"%@ · 离线" = "%@ · Hors ligne";
+"离线，仅查看" = "Hors ligne, lecture seule";
 "重命名…" = "Renommer…";
 "移除…" = "Supprimer…";
 "重命名线路" = "Renommer la ligne";
