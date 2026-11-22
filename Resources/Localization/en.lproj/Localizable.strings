@@ -1781,3 +1781,12 @@
 "没有符合条件的对话" = "No Matching Conversations";
 "通过 %@ 收发" = "Sent and received via %@";
 "切换到 %@ 收发" = "Switched to %@";
+"%@ 已离线，只能查看记录。请先在底部切换到在线线路。" = "%@ is offline, so its records are read-only. Switch to an online line at the bottom first.";
+"其他线路有未读短信或未接来电" = "Other lines have unread messages or missed calls";
+"在线" = "Online";
+"离线" = "Offline";
+"没有离线线路的记录" = "No Records on Offline Lines";
+"离线线路只能查看已有的短信和通话记录。" = "Offline lines only show their existing messages and call records.";
+"卡槽未启用" = "SIM Slot Not Active";
+"模组已拔出" = "Module Unplugged";
+"%@ · 离线，仅查看" = "%@ · Offline, View Only";

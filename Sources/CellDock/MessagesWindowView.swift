@@ -11,7 +11,6 @@ struct MessagesWindowView: View {
     @State private var selectedConversationID: MessageConversation.ID?
     @State private var searchText = ""
     @State private var unreadOnly = false
-    @State private var lineFilter: CommunicationLine?
     @State private var isComposingNew = false
     @State private var newDestination = ""
     @FocusState private var listFocused: Bool
@@ -82,10 +81,7 @@ struct MessagesWindowView: View {
     }
 
     private func conversationSidebar(resolver: LineAppearanceResolver) -> some View {
-        let allConversations = conversations
-        let filterLines = Self.filterLines(in: allConversations, resolver: resolver)
-        let activeFilter = filterLines.contains { $0.line == lineFilter } ? lineFilter : nil
-        let visible = filtered(allConversations, lineFilter: activeFilter)
+        let visible = filtered(conversations)
 
         return VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -107,12 +103,7 @@ struct MessagesWindowView: View {
                 selection: $unreadOnly
             )
             .padding(.horizontal, 14)
-            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
-
-            if filterLines.count > 1 {
-                LineFilterBar(lines: filterLines, selection: $lineFilter)
-                    .padding(.bottom, 10)
-            }
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -203,20 +194,19 @@ struct MessagesWindowView: View {
         }
     }
 
-    /// One conversation per peer: the same number is a single row whichever
-    /// module carried its messages.
+    /// The conversations of the line picked in the module selector, one per
+    /// peer.
     private var conversations: [MessageConversation] {
-        MessageConversation.groupedByPeer(from: appState.messages)
+        let scope = appState.lineScope
+        return MessageConversation.groupedByPeer(
+            from: appState.messages.filter { scope.contains($0.line) }
+        )
     }
 
-    private func filtered(
-        _ conversations: [MessageConversation],
-        lineFilter: CommunicationLine?
-    ) -> [MessageConversation] {
+    private func filtered(_ conversations: [MessageConversation]) -> [MessageConversation] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return conversations.filter { conversation in
             if unreadOnly, !conversation.hasUnread { return false }
-            if let lineFilter, !conversation.lines.contains(lineFilter) { return false }
             guard !query.isEmpty else { return true }
             let name = contacts.displayName(for: conversation.address) ?? ""
             return name.localizedCaseInsensitiveContains(query) ||
@@ -225,19 +215,6 @@ struct MessagesWindowView: View {
                     $0.body.localizedCaseInsensitiveContains(query)
                 }
         }
-    }
-
-    /// Every line that appears in the list, ordered by module and SIM slot.
-    private static func filterLines(
-        in conversations: [MessageConversation],
-        resolver: LineAppearanceResolver
-    ) -> [LineAppearance] {
-        var seen = Set<CommunicationLine>()
-        return conversations
-            .flatMap(\.lines)
-            .filter { seen.insert($0).inserted }
-            .map { resolver.appearance(for: $0) }
-            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
     }
 
     private var selectedConversation: MessageConversation? {
@@ -275,7 +252,7 @@ struct MessagesWindowView: View {
         if conversations.contains(where: { $0.id == id }) {
             selectedConversationID = id
             isComposingNew = false
-        } else {
+        } else if !appState.blocksActionWhileViewingOfflineLine() {
             newDestination = destination
             selectedConversationID = nil
             isComposingNew = true
@@ -283,6 +260,7 @@ struct MessagesWindowView: View {
     }
 
     private func beginNewMessage() {
+        guard !appState.blocksActionWhileViewingOfflineLine() else { return }
         newDestination = ""
         isComposingNew = true
         selectedConversationID = nil
@@ -311,7 +289,7 @@ struct MessagesWindowView: View {
     private func handleFocusFirstItemRequest() {
         guard focusFirstItemRequest else { return }
         isComposingNew = false
-        selectedConversationID = filtered(conversations, lineFilter: nil).first?.id
+        selectedConversationID = filtered(conversations).first?.id
         didHandleFocusFirstItemRequest()
         listFocused = false
         DispatchQueue.main.async {
@@ -329,8 +307,6 @@ private struct MessageThreadView: View {
     let didRouteMessage: (String) -> Void
 
     @State private var draft = ""
-    /// The line the user picked for this peer; nil follows the default.
-    @State private var chosenModuleID: CellularModuleID?
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -375,6 +351,7 @@ private struct MessageThreadView: View {
 
             if SMSPDUEncoder.isValidDestination(conversation.address) {
                 Button {
+                    guard !appState.blocksActionWhileViewingOfflineLine() else { return }
                     CommunicationWindowController.shared.showPhone(number: conversation.address)
                 } label: {
                     Image(systemName: "phone.fill")
@@ -501,7 +478,7 @@ private struct MessageThreadView: View {
             draft: $draft,
             options: sendOptions,
             selectedModuleID: sendModuleID,
-            onSelectModule: { chosenModuleID = $0 },
+            onSelectModule: { _ in },
             canSend: canSend,
             isSending: appState.isSendingMessage(via: sendModuleID),
             sendHelp: sendModuleID.map(appState.moduleHasCall) == true
@@ -517,42 +494,24 @@ private struct MessageThreadView: View {
         .padding(.vertical, 11)
     }
 
-    private var sendOptions: [SendLineOption] {
-        resolver.sendOptions
-    }
-
-    private var defaultChoice: SendModuleChoice {
-        resolver.defaultSendModule(
-            lastLine: conversation.latestLine,
-            current: appState.currentCommunicationModuleID
-        )
-    }
-
-    /// The user's pick while that module can still send, otherwise the default.
+    /// Messages go out on the line picked in the module selector.
     private var sendModuleID: CellularModuleID? {
-        if let chosenModuleID,
-           sendOptions.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
-            return chosenModuleID
-        }
-        return defaultChoice.moduleID
+        appState.lineScope.moduleID
+    }
+
+    private var sendOptions: [SendLineOption] {
+        resolver.sendOptions.filter { $0.moduleID == sendModuleID }
     }
 
     private var selectedOption: SendLineOption? {
-        sendOptions.first { $0.moduleID == sendModuleID }
+        sendOptions.first
     }
 
-    /// Said once, above the input, when a reply cannot go out on the line
-    /// this peer was last reached through.
+    /// Shown above the input while the list is on a read-only offline line.
     private var fallbackNote: String? {
-        guard chosenModuleID == nil, defaultChoice.fellBack,
-              let selectedOption else {
-            return nil
-        }
-        return L10n.tr(
-            "上次用的 %@ 当前不可用，已改用 %@ 发送。",
-            resolver.appearance(for: conversation.latestLine).title,
-            selectedOption.appearance.title
-        )
+        let scope = appState.lineScope
+        guard !scope.isOnline, scope.line != nil else { return nil }
+        return L10n.tr("%@ 已离线，只能查看记录。请先在底部切换到在线线路。", scope.appearance.title)
     }
 
     private var canSend: Bool {
@@ -763,7 +722,6 @@ private struct NewConversationView: View {
     let didSend: (String) -> Void
 
     @State private var bodyText = ""
-    @State private var chosenModuleID: CellularModuleID?
     @FocusState private var recipientFocused: Bool
     @FocusState private var bodyFocused: Bool
 
@@ -821,7 +779,7 @@ private struct NewConversationView: View {
                 draft: $bodyText,
                 options: sendOptions,
                 selectedModuleID: sendModuleID,
-                onSelectModule: { chosenModuleID = $0 },
+                onSelectModule: { _ in },
                 canSend: canSend,
                 isSending: appState.isSendingMessage(via: sendModuleID),
                 sendHelp: L10n.tr("发送（⌘Return）"),
@@ -845,25 +803,17 @@ private struct NewConversationView: View {
         }
     }
 
-    private var sendOptions: [SendLineOption] {
-        resolver.sendOptions
+    /// A new conversation goes out on the line picked in the module selector.
+    private var sendModuleID: CellularModuleID? {
+        appState.lineScope.moduleID
     }
 
-    /// A new conversation has no line of its own yet, so it starts on the
-    /// current module unless the user picks another one.
-    private var sendModuleID: CellularModuleID? {
-        if let chosenModuleID,
-           sendOptions.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
-            return chosenModuleID
-        }
-        return resolver.defaultSendModule(
-            lastLine: nil,
-            current: appState.currentCommunicationModuleID
-        ).moduleID
+    private var sendOptions: [SendLineOption] {
+        resolver.sendOptions.filter { $0.moduleID == sendModuleID }
     }
 
     private var selectedOption: SendLineOption? {
-        sendOptions.first { $0.moduleID == sendModuleID }
+        sendOptions.first
     }
 
     private var canSend: Bool {

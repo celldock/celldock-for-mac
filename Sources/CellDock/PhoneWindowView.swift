@@ -155,6 +155,7 @@ struct PhoneWindowView: View {
 struct CommunicationModuleStatusMenu: View {
     @EnvironmentObject private var appState: AppState
     @State private var isPopoverPresented = false
+    @State private var showsOfflineLines = false
 
     let openSIMManagement: () -> Void
 
@@ -164,8 +165,8 @@ struct CommunicationModuleStatusMenu: View {
         } label: {
             HStack(spacing: 8) {
                 CommunicationModuleSignalBars(
-                    bars: selectedModule?.modem.signalBars ?? 0,
-                    hasSignal: selectedModuleHasSignal,
+                    bars: isViewingOffline ? 0 : (selectedModule?.modem.signalBars ?? 0),
+                    hasSignal: !isViewingOffline && selectedModuleHasSignal,
                     tint: selectedModuleHasSignal ? .green : .secondary,
                     barWidth: 2.5,
                     spacing: 1.5
@@ -173,16 +174,20 @@ struct CommunicationModuleStatusMenu: View {
                 .frame(width: 14, height: 18)
                 .accessibilityHidden(true)
 
-                if let appearance = selectedAppearance,
-                   let badgeText = appearance.badgeText {
-                    LineBadge(text: badgeText, color: appearance.tint.solid)
-                }
-
-                Text(pillTitle)
+                Text(pickerTitle)
+                    .foregroundStyle(isViewingOffline ? Color.secondary : Color.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 Spacer(minLength: 4)
+
+                if hasAttentionElsewhere {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 7, height: 7)
+                        .help(L10n.tr("其他线路有未读短信或未接来电"))
+                        .accessibilityLabel(L10n.tr("其他线路有未读短信或未接来电"))
+                }
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.appSymbol(.indicator, weight: .semibold))
@@ -209,6 +214,9 @@ struct CommunicationModuleStatusMenu: View {
         ) {
             popoverContent
         }
+        .onChange(of: isPopoverPresented) { _, presented in
+            if presented { showsOfflineLines = isViewingOffline }
+        }
         .help(statusDescription)
         .accessibilityLabel(L10n.tr("蜂窝设备：%@", statusDescription))
         .accessibilityValue(isPopoverPresented ? L10n.tr("已展开") : L10n.tr("已收起"))
@@ -216,94 +224,125 @@ struct CommunicationModuleStatusMenu: View {
     }
 
     private var popoverContent: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(L10n.tr("当前通信模组"))
-                    .font(.appBodyStrong)
-                Text(L10n.tr("短信和拨号使用所选模组"))
-                    .font(.appCaption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
+        let scope = appState.lineScope
+        let offline = offlineLines
+        let showsTabs = appState.cellularModules.count > 1 || !offline.isEmpty
 
-            Divider()
-
-            Group {
-                if appState.cellularModules.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "externaldrive.badge.questionmark")
-                            .font(.appSymbol(.rail, weight: .regular))
-                            .foregroundStyle(.secondary)
-                        Text(L10n.tr("没有可用模组"))
-                            .font(.appCalloutStrong)
-                        Text(L10n.tr("连接设备后将自动显示在这里"))
-                            .font(.appCaption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 22)
+        return VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                if showsTabs {
+                    CommunicationGlassTabs(
+                        items: [(false, "在线"), (true, "离线")],
+                        selection: $showsOfflineLines
+                    )
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 3) {
-                            ForEach(appState.cellularModules) { module in
-                                moduleSelectionRow(module)
-                            }
-                        }
-                        .padding(6)
-                    }
-                    .frame(maxHeight: 280)
+                    Text(L10n.tr("当前模组"))
+                        .font(.appCalloutStrong)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 6)
                 }
-            }
 
-            Divider()
-
-            VStack(spacing: 2) {
-                CommunicationModulePopoverAction(
-                    title: L10n.tr("管理 SIM 卡"),
-                    systemImage: "simcard",
-                    isEnabled: true,
-                    showsProgress: false,
-                    trailingSystemImage: "chevron.right"
-                ) {
+                Button {
                     isPopoverPresented = false
                     openSIMManagement()
+                } label: {
+                    Image(systemName: "simcard")
+                        .font(.appSymbol(.small))
+                        .frame(width: 30, height: 28)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .adaptiveGlassSurface(cornerRadius: 9, treatment: .clear, isInteractive: true)
+                .help(L10n.tr("管理 SIM 卡"))
+                .accessibilityLabel(L10n.tr("管理 SIM 卡"))
             }
-            .padding(6)
+
+            if showsTabs && showsOfflineLines {
+                offlineList(offline, scope: scope)
+            } else {
+                onlineList(scope: scope)
+            }
         }
+        .padding(8)
         .frame(width: 310)
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func moduleSelectionRow(_ module: CellularModuleSummary) -> some View {
-        let isSelected = appState.currentCommunicationModuleID == module.id
-        return Button {
-            guard module.isCommunicationEligible else { return }
-            appState.selectCommunicationModule(module.id)
-            isPopoverPresented = false
-        } label: {
-            HStack(spacing: 10) {
-                CommunicationModuleSignalBars(
-                    bars: module.modem.signalBars,
-                    hasSignal: moduleHasSignal(module),
-                    tint: moduleHasSignal(module) ? .green : .secondary,
-                    barWidth: 3,
-                    spacing: 2
-                )
-                .frame(width: 20, height: 24)
-                .accessibilityHidden(true)
+    @ViewBuilder
+    private func onlineList(scope: LineScope) -> some View {
+        if appState.cellularModules.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "externaldrive.badge.questionmark")
+                    .font(.appSymbol(.rail, weight: .regular))
+                    .foregroundStyle(.secondary)
+                Text(L10n.tr("没有可用模组"))
+                    .font(.appCalloutStrong)
+                Text(L10n.tr("连接设备后将自动显示在这里"))
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(appState.cellularModules) { module in
+                        moduleSelectionRow(module, scope: scope)
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+        }
+    }
 
-                if let badgeText = appearance(of: module).badgeText {
-                    LineBadge(text: badgeText, color: appearance(of: module).tint.solid)
+    @ViewBuilder
+    private func offlineList(_ lines: [CommunicationLine], scope: LineScope) -> some View {
+        if lines.isEmpty {
+            Text(L10n.tr("没有离线线路的记录"))
+                .font(.appCallout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 3) {
+                    ForEach(lines, id: \.self) { line in
+                        offlineLineRow(line, scope: scope)
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+
+            Text(L10n.tr("离线线路只能查看已有的短信和通话记录。"))
+                .font(.appCaption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 6)
+        }
+    }
+
+    private func lineRow(
+        appearance: LineAppearance,
+        title: String,
+        detail: String,
+        attention: Int,
+        isSelected: Bool,
+        trailingStatus: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                if let badgeText = appearance.badgeText {
+                    LineBadge(text: badgeText, color: appearance.tint.solid)
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(module.displayName) · \(module.carrierName)")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: title)
                         .font(.appBodyStrong)
                         .lineLimit(1)
 
-                    Text(moduleSelectionDetail(module))
+                    Text(verbatim: detail)
                         .font(.appCaption)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -312,54 +351,92 @@ struct CommunicationModuleStatusMenu: View {
 
                 Spacer(minLength: 8)
 
+                if attention > 0 {
+                    UnreadCountPill(count: attention)
+                }
+
                 if isSelected {
                     Image(systemName: "checkmark")
                         .font(.appSymbol(.inline, weight: .semibold))
                         .foregroundStyle(Color.accentColor)
-                } else if !module.isCommunicationEligible {
-                    Text(module.statusText)
+                } else if let trailingStatus {
+                    Text(verbatim: trailingStatus)
                         .font(.appCaption)
                         .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(!module.isCommunicationEligible)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(isSelected ? Color.accentColor.opacity(0.10) : Color.clear)
         }
-        .accessibilityLabel(module.accessibilitySummary)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private var pickerTitle: String {
-        appState.currentCommunicationModule?.selectorTitle ??
-            (appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组"))
-    }
-
-    private func appearance(of module: CellularModuleSummary) -> LineAppearance {
-        let resolver = appState.lineAppearanceResolver
-        return resolver.appearance(for: resolver.currentLine(of: module))
-    }
-
-    private var selectedAppearance: LineAppearance? {
-        selectedModule.map(appearance(of:))
-    }
-
-    /// The badge already says which module and SIM slot, so the label only
-    /// adds what the badge cannot: carrier and radio technology.
-    private var pillTitle: String {
-        guard let selectedModule else { return pickerTitle }
-        guard selectedModule.modem.simReady else {
-            return "\(selectedModule.localizedDisplayName) · \(selectedModule.statusText)"
+    private func moduleSelectionRow(_ module: CellularModuleSummary, scope: LineScope) -> some View {
+        let resolver = scope.resolver
+        let line = resolver.currentLine(of: module)
+        let rowScope = LineScope(resolver: resolver, line: line, isOnline: true)
+        return lineRow(
+            appearance: resolver.appearance(for: line),
+            title: "\(module.displayName) · \(module.carrierName)",
+            detail: moduleSelectionDetail(module),
+            attention: appState.attentionCount(in: rowScope),
+            isSelected: scope.isOnline && scope.line == line,
+            trailingStatus: module.isCommunicationEligible ? nil : module.statusText
+        ) {
+            guard module.isCommunicationEligible else { return }
+            appState.selectCommunicationModule(module.id)
+            isPopoverPresented = false
         }
-        return [selectedModule.carrierName, selectedModule.technologyName]
-            .compactMap { $0 }
-            .joined(separator: " · ")
+        .disabled(!module.isCommunicationEligible)
+        .accessibilityLabel(module.accessibilitySummary)
+    }
+
+    private func offlineLineRow(_ line: CommunicationLine, scope: LineScope) -> some View {
+        let appearance = scope.resolver.appearance(for: line)
+        let rowScope = LineScope(resolver: scope.resolver, line: line, isOnline: false)
+        return lineRow(
+            appearance: appearance,
+            title: appearance.title,
+            detail: appearance.isAttached ? L10n.tr("卡槽未启用") : L10n.tr("模组已拔出"),
+            attention: appState.attentionCount(in: rowScope),
+            isSelected: !scope.isOnline && scope.line == line
+        ) {
+            appState.viewOfflineLine(line)
+            isPopoverPresented = false
+        }
+        .accessibilityLabel(appearance.title)
+    }
+
+    private var offlineLines: [CommunicationLine] {
+        appState.lineAppearanceResolver.offlineLines(among: appState.recordedLines)
+    }
+
+    private var isViewingOffline: Bool {
+        let scope = appState.lineScope
+        return !scope.isOnline && scope.line != nil
+    }
+
+    /// True when a line other than the one on screen has unread messages or
+    /// missed calls, so nothing arrives unnoticed.
+    private var hasAttentionElsewhere: Bool {
+        let scope = appState.lineScope
+        let total = appState.messages.lazy.filter { !$0.isOutgoing && !$0.isRead }.count +
+            appState.callHistory.records.lazy.filter(\.isUnacknowledgedMissed).count
+        return total > appState.attentionCount(in: scope)
+    }
+
+    private var pickerTitle: String {
+        if isViewingOffline {
+            return L10n.tr("%@ · 离线，仅查看", appState.lineScope.appearance.title)
+        }
+        return appState.currentCommunicationModule?.selectorTitle ??
+            (appState.cellularModules.isEmpty ? L10n.tr("没有可用模组") : L10n.tr("选择通信模组"))
     }
 
     private var selectedModule: CellularModuleSummary? {
@@ -414,60 +491,6 @@ private struct CommunicationModuleSignalBars: View {
         return index < min(max(bars, 0), 4)
             ? tint
             : tint.opacity(0.20)
-    }
-}
-
-private struct CommunicationModulePopoverAction: View {
-    let title: String
-    let systemImage: String
-    let isEnabled: Bool
-    let showsProgress: Bool
-    let trailingSystemImage: String?
-    let action: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18)
-
-                Text(L10n.tr(title))
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                if showsProgress {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let trailingSystemImage {
-                    Image(systemName: trailingSystemImage)
-                        .font(.appSymbol(.indicator, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .font(.appCallout)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-            .contentShape(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.55)
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(
-                    isHovered && isEnabled
-                        ? Color.primary.opacity(0.075)
-                        : Color.clear
-                )
-        }
-        .onHover { isHovered = $0 }
     }
 }
 
@@ -1047,14 +1070,12 @@ private struct RecentCallsView: View {
     var didHandleFocusFirstItemRequest: () -> Void = {}
     @State private var missedOnly = false
     @State private var searchText = ""
-    @State private var lineFilter: CommunicationLine?
     @State private var deletingAll = false
     @FocusState private var listFocused: Bool
 
     var body: some View {
         let resolver = appState.lineAppearanceResolver
-        let filterLines = Self.filterLines(in: history.records, resolver: resolver)
-        let visible = filteredRecords(availableLines: filterLines)
+        let visible = filteredRecords
 
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -1067,6 +1088,7 @@ private struct RecentCallsView: View {
                     accessibilityLabel: L10n.tr("拨打新号码"),
                     tint: .green
                 ) {
+                    guard !appState.blocksActionWhileViewingOfflineLine() else { return }
                     model.dialNumber = ""
                     model.activateFromRail(.dialer)
                 }
@@ -1079,12 +1101,7 @@ private struct RecentCallsView: View {
                 selection: $missedOnly
             )
             .padding(.horizontal, 14)
-            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
-
-            if filterLines.count > 1 {
-                LineFilterBar(lines: filterLines, selection: $lineFilter)
-                    .padding(.bottom, 10)
-            }
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -1117,7 +1134,6 @@ private struct RecentCallsView: View {
                                 Button("回拨", systemImage: "phone") {
                                     call(record, resolver: resolver)
                                 }
-                                .disabled(!canDial(record, resolver: resolver))
                                 Button("发短信", systemImage: "message") {
                                     appState.showMessagesWindow(destination: record.number)
                                 }
@@ -1152,7 +1168,7 @@ private struct RecentCallsView: View {
         }
         .onChange(of: missedOnly) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: searchText) { _, _ in ensureSelectionIsVisible() }
-        .onChange(of: lineFilter) { _, _ in ensureSelectionIsVisible() }
+        .onChange(of: appState.lineScope.line) { _, _ in ensureSelectionIsVisible() }
         .onChange(of: history.records) { _, _ in ensureSelectionIsVisible() }
         .confirmationDialog(
             "清除所有最近通话？",
@@ -1166,37 +1182,18 @@ private struct RecentCallsView: View {
         }
     }
 
-    /// Every line that carried a call, ordered by module and SIM slot.
-    private static func filterLines(
-        in records: [CallHistoryRecord],
-        resolver: LineAppearanceResolver
-    ) -> [LineAppearance] {
-        var seen = Set<CommunicationLine>()
-        return records
-            .compactMap(\.line)
-            .filter { seen.insert($0).inserted }
-            .map { resolver.appearance(for: $0) }
-            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
-    }
-
-    private func filteredRecords(availableLines: [LineAppearance]) -> [CallHistoryRecord] {
-        let activeFilter = availableLines.contains { $0.line == lineFilter } ? lineFilter : nil
+    /// The calls of the line picked in the module selector.
+    private var filteredRecords: [CallHistoryRecord] {
+        let scope = appState.lineScope
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         return history.records.filter { record in
+            guard scope.contains(record.line) else { return false }
             if missedOnly, !record.isMissed { return false }
-            if let activeFilter, record.line != activeFilter { return false }
             guard !query.isEmpty else { return true }
             return record.number.localizedCaseInsensitiveContains(query) ||
                 (contacts.displayName(for: record.number) ?? "")
                     .localizedCaseInsensitiveContains(query)
         }
-    }
-
-    private var filteredRecords: [CallHistoryRecord] {
-        filteredRecords(availableLines: Self.filterLines(
-            in: history.records,
-            resolver: appState.lineAppearanceResolver
-        ))
     }
 
     private func selectInitialRecordIfNeeded() {
@@ -1215,7 +1212,6 @@ private struct RecentCallsView: View {
             return
         }
         searchText = ""
-        lineFilter = nil
         missedOnly = true
         selectedRecordID = recordID
         guard let proxy else { return }
@@ -1252,28 +1248,13 @@ private struct RecentCallsView: View {
         return recordings.records.first { $0.id == recordingID }
     }
 
-    /// A callback goes out on the line the call came through when that line
-    /// is live, otherwise on the current module.
-    private func callbackModule(
-        for record: CallHistoryRecord,
-        resolver: LineAppearanceResolver
-    ) -> CellularModuleID? {
-        resolver.defaultSendModule(
-            lastLine: record.line,
-            current: appState.currentCommunicationModuleID
-        ).moduleID
-    }
-
-    private func canDial(_ record: CallHistoryRecord, resolver: LineAppearanceResolver) -> Bool {
-        guard let moduleID = callbackModule(for: record, resolver: resolver) else { return false }
-        return appState.moduleCanDial(moduleID) &&
-            !appState.isChangingCall &&
-            CallATParser.normalizedDialNumber(record.number) != nil
-    }
-
+    /// A callback goes out on the line picked in the module selector.
     private func call(_ record: CallHistoryRecord, resolver: LineAppearanceResolver) {
-        guard canDial(record, resolver: resolver),
-              let moduleID = callbackModule(for: record, resolver: resolver) else { return }
+        guard !appState.blocksActionWhileViewingOfflineLine(),
+              let moduleID = appState.lineScope.moduleID,
+              appState.moduleCanDial(moduleID),
+              !appState.isChangingCall,
+              CallATParser.normalizedDialNumber(record.number) != nil else { return }
         model.dialNumber = record.number
         appState.dial(record.number, via: moduleID)
     }
@@ -1321,9 +1302,6 @@ private struct RecentCallDetailView: View {
     @ObservedObject var contacts: SystemContactStore
     let selectedRecordID: CallHistoryRecord.ID?
 
-    /// The line the user picked for the callback; nil follows the default.
-    @State private var chosenModuleID: CellularModuleID?
-
     private static let historyLimit = 50
 
     var body: some View {
@@ -1365,9 +1343,6 @@ private struct RecentCallDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: selectedRecordID) { _, _ in
-            chosenModuleID = nil
-        }
     }
 
     private func identityHeader(
@@ -1405,43 +1380,29 @@ private struct RecentCallDetailView: View {
         _ record: CallHistoryRecord,
         resolver: LineAppearanceResolver
     ) -> some View {
-        let options = resolver.sendOptions
-        let moduleID = callbackModule(for: record, resolver: resolver, options: options)
-        let option = options.first { $0.moduleID == moduleID }
+        let scope = appState.lineScope
+        let line = scope.appearance
 
         return HStack(spacing: 8) {
-            Menu {
-                ForEach(options) { candidate in
-                    Button {
-                        chosenModuleID = candidate.moduleID
-                    } label: {
-                        if candidate.moduleID == moduleID {
-                            Label(candidate.menuTitle, systemImage: "checkmark")
-                        } else {
-                            Text(verbatim: candidate.menuTitle)
-                        }
-                    }
-                    .disabled(!candidate.isEligible)
-                }
+            Button {
+                call(record)
             } label: {
                 Label {
-                    Text(verbatim: option.map { L10n.tr("用 %@ 回拨", $0.appearance.title) }
-                        ?? L10n.tr("回拨"))
+                    Text(verbatim: scope.isOnline
+                        ? L10n.tr("用 %@ 回拨", line.title)
+                        : L10n.tr("回拨"))
                 } icon: {
                     Image(systemName: "phone.fill")
                 }
                 .font(.appBody.weight(.medium))
-            } primaryAction: {
-                call(record, via: moduleID)
             }
-            .menuStyle(.button)
             .adaptiveGlassButton(.prominent)
-            .tint(option?.appearance.tint.solid ?? Color.accentColor)
-            .fixedSize()
-            .disabled(!canDial(record, via: moduleID))
-            .help(option?.appearance.fullTitle ?? L10n.tr("回拨"))
+            .tint(scope.isOnline ? line.tint.solid : Color.secondary)
+            .disabled(scope.isOnline && !canDial(record))
+            .help(line.fullTitle)
 
             Button {
+                guard !appState.blocksActionWhileViewingOfflineLine() else { return }
                 appState.showMessagesWindow(destination: record.number)
             } label: {
                 Label("发信息", systemImage: "message")
@@ -1590,32 +1551,18 @@ private struct RecentCallDetailView: View {
         return RecentCallText.duration(record.duration)
     }
 
-    /// The user's pick while that module can still dial, otherwise the line
-    /// the call came through when it is live, otherwise the current module.
-    private func callbackModule(
-        for record: CallHistoryRecord,
-        resolver: LineAppearanceResolver,
-        options: [SendLineOption]
-    ) -> CellularModuleID? {
-        if let chosenModuleID,
-           options.contains(where: { $0.moduleID == chosenModuleID && $0.isEligible }) {
-            return chosenModuleID
-        }
-        return resolver.defaultSendModule(
-            lastLine: record.line,
-            current: appState.currentCommunicationModuleID
-        ).moduleID
-    }
-
-    private func canDial(_ record: CallHistoryRecord, via moduleID: CellularModuleID?) -> Bool {
-        guard let moduleID else { return false }
+    private func canDial(_ record: CallHistoryRecord) -> Bool {
+        guard let moduleID = appState.lineScope.moduleID else { return false }
         return appState.moduleCanDial(moduleID) &&
             !appState.isChangingCall &&
             CallATParser.normalizedDialNumber(record.number) != nil
     }
 
-    private func call(_ record: CallHistoryRecord, via moduleID: CellularModuleID?) {
-        guard canDial(record, via: moduleID), let moduleID else { return }
+    /// A callback goes out on the line picked in the module selector. On an
+    /// offline line it explains why it cannot.
+    private func call(_ record: CallHistoryRecord) {
+        guard !appState.blocksActionWhileViewingOfflineLine(),
+              canDial(record), let moduleID = appState.lineScope.moduleID else { return }
         model.dialNumber = record.number
         appState.dial(record.number, via: moduleID)
     }

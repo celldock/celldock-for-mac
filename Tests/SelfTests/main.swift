@@ -740,6 +740,41 @@ do {
         "send options did not list each module at its active SIM slot"
     )
 
+    // MARK: The line shown by the lists
+
+    let slotOne = CommunicationLine(moduleID: secondSIM, simSlot: 1)
+    let slotTwo = CommunicationLine(moduleID: secondSIM, simSlot: 2)
+    let firstLine = CommunicationLine(moduleID: firstSIM, simSlot: nil)
+    try expect(
+        lineResolver.onlineLines == [firstLine, slotOne] &&
+            lineResolver.isOnline(slotOne) && !lineResolver.isOnline(slotTwo) &&
+            !lineResolver.isOnline(CommunicationLine(moduleID: movedPort, simSlot: nil)),
+        "online lines are not each module at its active SIM slot"
+    )
+    let onlineScope = LineScope(resolver: lineResolver, line: slotOne, isOnline: true)
+    try expect(
+        onlineScope.contains(slotOne) && !onlineScope.contains(slotTwo) &&
+            !onlineScope.contains(firstLine) && !onlineScope.contains(nil) &&
+            onlineScope.contains(CommunicationLine(moduleID: secondSIM, simSlot: nil)) &&
+            onlineScope.moduleID == secondSIM,
+        "an online line shows records of another line or hides its own"
+    )
+    try expect(
+        LineScope(resolver: lineResolver, line: firstLine, isOnline: true).contains(nil),
+        "records stored without a line disappeared from every list"
+    )
+    let offlineScope = LineScope(resolver: lineResolver, line: slotTwo, isOnline: false)
+    try expect(
+        offlineScope.contains(slotTwo) && !offlineScope.contains(slotOne) &&
+            offlineScope.moduleID == nil,
+        "an offline line is not limited to its own records or can still send"
+    )
+    try expect(
+        lineResolver.offlineLines(among: [slotOne, slotTwo, firstLine, slotTwo]) == [slotTwo] &&
+            unpluggedResolver.offlineLines(among: [firstLine, slotOne]) == [firstLine],
+        "offline lines were not found among the recorded lines"
+    )
+
     // MARK: Faces
 
     try expect(

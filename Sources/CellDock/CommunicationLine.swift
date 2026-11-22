@@ -290,3 +290,62 @@ struct LineAppearanceResolver {
         return name + L10n.tr(" · 卡 %lld", Int64(simSlot))
     }
 }
+
+/// The one line whose records the Messages, Recents and Recordings lists
+/// show. An online line is an attached module at its active SIM slot and can
+/// send and dial; an offline line is history that can only be read.
+struct LineScope {
+    let resolver: LineAppearanceResolver
+    /// nil when no module is attached and no offline line is picked.
+    let line: CommunicationLine?
+    let isOnline: Bool
+
+    /// The attached module behind an online scope.
+    var moduleID: CellularModuleID? {
+        isOnline ? line?.moduleID : nil
+    }
+
+    var appearance: LineAppearance {
+        resolver.appearance(for: line)
+    }
+
+    func contains(_ recordLine: CommunicationLine?) -> Bool {
+        guard let line else { return true }
+        return isOnline
+            ? resolver.record(recordLine, isOnOnlineLine: line)
+            : recordLine == line
+    }
+}
+
+extension LineAppearanceResolver {
+    /// The lines that can be used right now: each module at its active slot.
+    var onlineLines: [CommunicationLine] {
+        modules.map { currentLine(of: $0) }
+    }
+
+    /// Whether a record belongs to an online line. Records stored before
+    /// lines were tagged count for the first module so they stay visible,
+    /// and a record without a SIM slot counts for its module's active slot.
+    func record(_ recordLine: CommunicationLine?, isOnOnlineLine line: CommunicationLine) -> Bool {
+        guard let recordLine else { return line.moduleID == modules.first?.id }
+        let moduleID = appearance(for: recordLine).attachedModuleID ?? recordLine.moduleID
+        guard moduleID == line.moduleID else { return false }
+        return recordLine.simSlot == nil || line.simSlot == nil || recordLine.simSlot == line.simSlot
+    }
+
+    func isOnline(_ recordLine: CommunicationLine?) -> Bool {
+        onlineLines.contains { record(recordLine, isOnOnlineLine: $0) }
+    }
+
+    /// History lines that no attached module is on now: unplugged modules
+    /// and SIM slots that are not the active one. Ordered by badge.
+    func offlineLines(among recordLines: [CommunicationLine]) -> [CommunicationLine] {
+        var seen = Set<CommunicationLine>()
+        return recordLines
+            .filter { seen.insert($0).inserted && !isOnline($0) }
+            .sorted {
+                (appearance(for: $0).badgeText ?? "~", $0.moduleID.rawValue) <
+                    (appearance(for: $1).badgeText ?? "~", $1.moduleID.rawValue)
+            }
+    }
+}

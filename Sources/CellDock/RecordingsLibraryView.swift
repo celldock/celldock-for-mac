@@ -12,7 +12,6 @@ struct RecordingsLibraryView: View {
 
     @State private var searchText = ""
     @State private var directionFilter = 0
-    @State private var lineFilter: CommunicationLine?
     @State private var deletingRecording: CallRecordingRecord?
     @State private var isRenaming = false
     @State private var renameText = ""
@@ -38,6 +37,11 @@ struct RecordingsLibraryView: View {
         }
         .onChange(of: recordings.records.map(\.id)) { _, _ in
             selectFirstRecordingIfNeeded()
+        }
+        .onChange(of: appState.lineScope.line) { _, _ in
+            if !filteredRecordingRecords.contains(where: { $0.id == selectedRecordingID }) {
+                selectedRecordingID = filteredRecordingRecords.first?.id
+            }
         }
         .onChange(of: selectedRecordingID) { _, _ in
             renameText = selectedRecording?.title ?? ""
@@ -73,8 +77,7 @@ struct RecordingsLibraryView: View {
 
     private var recordingList: some View {
         let resolver = appState.lineAppearanceResolver
-        let filterLines = self.filterLines(resolver: resolver)
-        let visible = filteredRecordingRecords(availableLines: filterLines)
+        let visible = filteredRecordingRecords
 
         return VStack(spacing: 0) {
             TextField("搜索录音、联系人或号码", text: $searchText)
@@ -88,12 +91,7 @@ struct RecordingsLibraryView: View {
                 selection: $directionFilter
             )
             .padding(.horizontal, 14)
-            .padding(.bottom, filterLines.count > 1 ? 8 : 10)
-
-            if filterLines.count > 1 {
-                LineFilterBar(lines: filterLines, selection: $lineFilter)
-                    .padding(.bottom, 10)
-            }
+            .padding(.bottom, 10)
 
             List(visible) { record in
                 recordingRow(record, line: resolver.appearance(for: line(of: record)))
@@ -157,16 +155,6 @@ struct RecordingsLibraryView: View {
         }?.line
     }
 
-    /// Every line that carried a recorded call, ordered by module and SIM slot.
-    private func filterLines(resolver: LineAppearanceResolver) -> [LineAppearance] {
-        var seen = Set<CommunicationLine>()
-        return recordings.records
-            .compactMap { line(of: $0) }
-            .filter { seen.insert($0).inserted }
-            .map { resolver.appearance(for: $0) }
-            .sorted { ($0.badgeText ?? "~", $0.id) < ($1.badgeText ?? "~", $1.id) }
-    }
-
     @ViewBuilder
     private var detail: some View {
         if let record = selectedRecording {
@@ -177,8 +165,14 @@ struct RecordingsLibraryView: View {
                 waveform: waveform,
                 waveformError: waveformError,
                 recordings: recordings,
-                onCall: { appState.showPhoneWindow(number: record.number) },
-                onMessage: { appState.showMessagesWindow(destination: record.number) },
+                onCall: {
+                    guard !appState.blocksActionWhileViewingOfflineLine() else { return }
+                    appState.showPhoneWindow(number: record.number)
+                },
+                onMessage: {
+                    guard !appState.blocksActionWhileViewingOfflineLine() else { return }
+                    appState.showMessagesWindow(destination: record.number)
+                },
                 onRename: beginRename,
                 onExport: { recordings.export(record) },
                 onReveal: { recordings.reveal(record) },
@@ -195,18 +189,11 @@ struct RecordingsLibraryView: View {
         }
     }
 
+    /// The recordings of the line picked in the module selector.
     private var filteredRecordingRecords: [CallRecordingRecord] {
-        filteredRecordingRecords(
-            availableLines: filterLines(resolver: appState.lineAppearanceResolver)
-        )
-    }
-
-    private func filteredRecordingRecords(
-        availableLines: [LineAppearance]
-    ) -> [CallRecordingRecord] {
-        let activeFilter = availableLines.contains { $0.line == lineFilter } ? lineFilter : nil
+        let scope = appState.lineScope
         let directional = recordings.records.filter { record in
-            if let activeFilter, line(of: record) != activeFilter { return false }
+            guard scope.contains(line(of: record)) else { return false }
             return directionFilter == 0 ||
                 (directionFilter == 1 && record.direction == .incoming) ||
                 (directionFilter == 2 && record.direction == .outgoing)
@@ -231,7 +218,7 @@ struct RecordingsLibraryView: View {
            recordings.records.contains(where: { $0.id == selectedRecordingID }) {
             return
         }
-        selectedRecordingID = recordings.records.first?.id
+        selectedRecordingID = filteredRecordingRecords.first?.id
     }
 
     private func handleFocusFirstItemRequest() {

@@ -41,6 +41,54 @@ final class AppState: ObservableObject {
         registry.save()
     }
 
+    /// An offline line picked for read-only viewing; nil follows the current module.
+    @Published private(set) var viewedOfflineLine: CommunicationLine?
+
+    func viewOfflineLine(_ line: CommunicationLine) {
+        viewedOfflineLine = line
+    }
+
+    /// The line whose records the communication lists show.
+    var lineScope: LineScope {
+        let resolver = lineAppearanceResolver
+        if let viewedOfflineLine, !resolver.isOnline(viewedOfflineLine) {
+            return LineScope(resolver: resolver, line: viewedOfflineLine, isOnline: false)
+        }
+        let module = currentCommunicationModule ?? cellularModules.first
+        return LineScope(
+            resolver: resolver,
+            line: module.map { resolver.currentLine(of: $0) },
+            isOnline: module != nil
+        )
+    }
+
+    /// Every line that appears in messages, calls or recordings.
+    var recordedLines: [CommunicationLine] {
+        messages.compactMap(\.line) +
+            callHistory.records.compactMap(\.line) +
+            callRecordings.records.compactMap { record in
+                record.moduleID.map { CommunicationLine(moduleID: $0, simSlot: record.simSlot) }
+            }
+    }
+
+    /// Unread messages plus unacknowledged missed calls on one line.
+    func attentionCount(in scope: LineScope) -> Int {
+        messages.lazy.filter { !$0.isOutgoing && !$0.isRead && scope.contains($0.line) }.count +
+            callHistory.records.lazy.filter { $0.isUnacknowledgedMissed && scope.contains($0.line) }.count
+    }
+
+    /// Sending and dialling need an online line. Returns true, after telling
+    /// the user why, when the lists are showing an offline one.
+    func blocksActionWhileViewingOfflineLine() -> Bool {
+        let scope = lineScope
+        guard !scope.isOnline, scope.line != nil else { return false }
+        presentTransientMessage(
+            L10n.tr("%@ 已离线，只能查看记录。请先在底部切换到在线线路。", scope.appearance.title),
+            isError: true
+        )
+        return true
+    }
+
     /// Resolves lines for one view update; reuse it for every row.
     var lineAppearanceResolver: LineAppearanceResolver {
         LineAppearanceResolver(modules: cellularModules, registry: moduleAppearanceRegistry)
@@ -529,6 +577,7 @@ final class AppState: ObservableObject {
             return
         }
         currentCommunicationModuleID = id
+        viewedOfflineLine = nil
         if activeCallModuleID == nil {
             call = moduleCallSnapshots[id] ?? CallSnapshot(moduleID: id)
         }

@@ -1778,3 +1778,12 @@
 "没有符合条件的对话" = "Aucune conversation correspondante";
 "通过 %@ 收发" = "Échanges via %@";
 "切换到 %@ 收发" = "Passage à %@";
+"%@ 已离线，只能查看记录。请先在底部切换到在线线路。" = "%@ est hors ligne : ses enregistrements sont en lecture seule. Passez d’abord à une ligne en ligne en bas.";
+"其他线路有未读短信或未接来电" = "D’autres lignes ont des messages non lus ou des appels manqués";
+"在线" = "En ligne";
+"离线" = "Hors ligne";
+"没有离线线路的记录" = "Aucun enregistrement sur des lignes hors ligne";
+"离线线路只能查看已有的短信和通话记录。" = "Les lignes hors ligne affichent uniquement leurs messages et appels existants.";
+"卡槽未启用" = "Emplacement SIM inactif";
+"模组已拔出" = "Module débranché";
+"%@ · 离线，仅查看" = "%@ · Hors ligne, lecture seule";
