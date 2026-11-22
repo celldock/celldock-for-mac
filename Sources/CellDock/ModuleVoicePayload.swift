@@ -31,7 +31,7 @@ enum ModuleVoicePayload {
         let components: [String: Data]
     }
 
-    enum PayloadError: LocalizedError {
+    enum PayloadError: AppLocalizedError {
         case invalid(String)
         case missing(String)
 

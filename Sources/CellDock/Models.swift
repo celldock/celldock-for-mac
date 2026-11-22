@@ -838,6 +838,36 @@ enum ModuleVoiceInitializationRetryPolicy {
         guard delays.indices.contains(attempts) else { return nil }
         return delays[attempts]
     }
+
+    static func busyMessage(
+        ownerName: String?,
+        processID: Int32?,
+        retryAttempt: Int?
+    ) -> String? {
+        let trimmedOwner = ownerName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let retryAttempt {
+            if let owner = trimmedOwner, !owner.isEmpty, let processID, processID > 0 {
+                return L10n.tr(
+                    "模块控制接口正被 %@（PID %@）占用；CellDock 将自动重试（%lld/5）。",
+                    owner,
+                    String(processID),
+                    Int64(retryAttempt)
+                )
+            }
+            return L10n.tr(
+                "模块控制接口正被其他 ADB 客户端占用；CellDock 将自动重试（%lld/5）。",
+                Int64(retryAttempt)
+            )
+        }
+        if let owner = trimmedOwner, !owner.isEmpty, let processID, processID > 0 {
+            return L10n.tr(
+                "模块控制接口正被 %@（PID %@）占用，可点击「结束占用并重试」或手动退出该进程。",
+                owner,
+                String(processID)
+            )
+        }
+        return nil
+    }
 }
 
 struct ConcatenationInfo: Hashable {

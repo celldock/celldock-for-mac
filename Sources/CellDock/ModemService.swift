@@ -3100,11 +3100,11 @@ final class ModemService {
                 )
             } catch {
                 callMediaBackend = .none
-                mediaError = L10n.error("QDC507 通话组件尚不可用：%@", underlying: error)
+                shouldRetryQDCInitialization = ADBModuleController.isInterfaceBusyError(error)
+                mediaError = formatQDCInitializationError(error)
                 snapshot.voiceCapability = .initializationFailed(
                     reason: mediaError ?? L10n.tr("Baiwang 语音组件初始化失败。")
                 )
-                shouldRetryQDCInitialization = ADBModuleController.isInterfaceBusyError(error)
             }
         case .qpcmv:
             let reset = command("AT+QPCMV=0", timeout: 3_000)
@@ -3209,11 +3209,19 @@ final class ModemService {
         }
         let generation = qdcInitializationRetryGeneration
         qdcInitializationRetryAttempts += 1
-        callSnapshot.lastError = L10n.tr(
+        let owner = USBInterfaceContentionResolver.adbInterfaceOwner(locationID: modemLocationID)
+        let message = ModuleVoiceInitializationRetryPolicy.busyMessage(
+            ownerName: owner?.processName,
+            processID: owner?.processID,
+            retryAttempt: qdcInitializationRetryAttempts
+        ) ?? L10n.tr(
             "模块控制接口正被其他 ADB 客户端占用；CellDock 将自动重试（%lld/5）。",
             Int64(qdcInitializationRetryAttempts)
         )
+        callSnapshot.lastError = message
         callSnapshot.controlInterfaceBusy = true
+        snapshot.voiceCapability = .initializationFailed(reason: message)
+        publishSnapshot(snapshot)
         publishCallSnapshot()
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self,
@@ -3250,25 +3258,35 @@ final class ModemService {
             publishSnapshot(snapshot)
             publishCallSnapshot()
         } catch {
+            let isBusy = ADBModuleController.isInterfaceBusyError(error)
+            let message = formatQDCInitializationError(error)
             callMediaBackend = .none
             callSnapshot.phase = .unavailable
             callSnapshot.voiceOverUSBSupported = false
-            callSnapshot.lastError = L10n.error(
-                "QDC507 通话组件尚不可用：%@",
-                underlying: error
-            )
-            callSnapshot.controlInterfaceBusy = ADBModuleController.isInterfaceBusyError(error)
-            snapshot.voiceCapability = .initializationFailed(
-                reason: callSnapshot.lastError ?? L10n.tr("Baiwang 语音组件初始化失败。")
-            )
+            callSnapshot.lastError = message
+            callSnapshot.controlInterfaceBusy = isBusy
+            snapshot.voiceCapability = .initializationFailed(reason: message)
             publishSnapshot(snapshot)
             publishCallSnapshot()
-            if ADBModuleController.isInterfaceBusyError(error) {
+            if isBusy {
                 scheduleQDCInitializationRetry()
             } else {
                 cancelQDCInitializationRetry()
             }
         }
+    }
+
+    private func formatQDCInitializationError(_ error: Error) -> String {
+        if ADBModuleController.isInterfaceBusyError(error),
+           let owner = USBInterfaceContentionResolver.adbInterfaceOwner(locationID: modemLocationID),
+           let message = ModuleVoiceInitializationRetryPolicy.busyMessage(
+               ownerName: owner.processName,
+               processID: owner.processID,
+               retryAttempt: nil
+           ) {
+            return message
+        }
+        return L10n.error("QDC507 通话组件尚不可用：%@", underlying: error)
     }
 
     private func cancelQDCInitializationRetry() {

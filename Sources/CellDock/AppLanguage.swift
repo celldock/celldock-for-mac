@@ -57,6 +57,11 @@ extension Notification.Name {
     )
 }
 
+/// Errors whose `errorDescription` is already localized in the selected app
+/// language via `L10n.tr`. `L10n.error(_:underlying:)` preserves their message
+/// instead of replacing it with an opaque NSError domain/code reference.
+protocol AppLocalizedError: LocalizedError {}
+
 enum L10n {
     static func tr(_ key: String, _ arguments: CVarArg...) -> String {
         let language = AppLanguage.storedPreference
@@ -70,10 +75,17 @@ enum L10n {
         localizedBundle(for: language)
     }
 
-    /// Keeps user-facing failures in the selected app language. The underlying
-    /// localizedDescription may use the system language or originate in a
-    /// helper process, so the UI receives a stable support reference instead.
+    /// Keeps user-facing failures in the selected app language. App-owned
+    /// `AppLocalizedError` values already localize via `L10n.tr`, so their
+    /// description is preserved; external or system errors fall back to a
+    /// stable support reference instead.
     static func error(_ key: String, underlying error: Error) -> String {
+        if let appError = error as? AppLocalizedError,
+           let description = appError.errorDescription?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !description.isEmpty {
+            return tr(key, description)
+        }
         let nsError = error as NSError
         let reference = tr("错误代码 %@（%lld）", nsError.domain, Int64(nsError.code))
         return tr(key, reference)
