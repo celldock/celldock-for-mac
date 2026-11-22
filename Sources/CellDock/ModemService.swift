@@ -129,7 +129,6 @@ final class ModemService {
     private var expectedRestartShutdownGrace = ModuleRestartPolicy.shutdownGrace(usbIdentity: nil)
     /// True while the service is in call recovery only because AT+CLCC could
     /// not be read, so no call was ever confirmed on the current instance.
-    private var callPresenceWasNeverConfirmed = false
     private var isRunning = false
     private var currentMessageStorage: String?
     private var readableMessageStorages: [String] = []
@@ -150,6 +149,10 @@ final class ModemService {
     private var euiccOperationInFlight = false
     private var commandInFlight = false
     private var commandStreamAcceptsCallInfo = true
+    private let voiceVerificationStore = VoiceCapabilityVerificationStore()
+    /// VoLTE_cap exactly as last read, before `volteReportDebouncer`.
+    private var lastReportedVoLTEAvailable: Bool?
+    private var volteReportDebouncer = VoLTEReportDebouncer()
     private var callCleanupScheduled = false
     private var callMediaCleanupPending = false
     private var modemRegistryID: UInt64 = 0
@@ -1154,6 +1157,11 @@ final class ModemService {
                 DispatchQueue.main.async { completion(.failure(L10n.tr("请先插入蜂窝模块。"))) }
                 return
             }
+            if celldock_modem_vendor_id(modem) == 0x2C7C,
+               celldock_modem_product_id(modem) == 0x0801 {
+                self.switchRM520NToECM(completion: completion)
+                return
+            }
             guard celldock_modem_vendor_id(modem) == 0x2C7C,
                   celldock_modem_product_id(modem) == 0x0125,
                   self.connectedModemMatchesExpectedIdentity() else {
@@ -1295,6 +1303,68 @@ final class ModemService {
                         : L10n.tr("已切换 CDC-ECM，模块正在重新枚举。")
                 ))
             }
+        }
+    }
+
+    /// Puts an RM520N-GL into CDC-ECM, the one network mode macOS drives
+    /// without a vendor driver. Runs on the modem queue. Only usbnet is
+    /// written: this module's USBCFG is never touched.
+    private func switchRM520NToECM(completion: @escaping (ModemActionResult) -> Void) {
+        guard connectedModemMatchesExpectedIdentity() else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("当前 AT 接口不是已锁定的 RM520N-GL 模块，未执行配置。")))
+            }
+            return
+        }
+        guard !callSnapshot.hasCall,
+              !hasPendingMediaCleanup,
+              !callActionInFlight else {
+            DispatchQueue.main.async { completion(.failure(L10n.tr("通话期间不能重启或切换模块网络模式。"))) }
+            return
+        }
+        guard case .empty = queryCallPresence() else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("无法确认模块中没有语音通话，未执行配置。")))
+            }
+            return
+        }
+
+        let usbNetQuery = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
+        guard usbNetQuery.isSuccess,
+              let currentMode = ATResponseParser.parseUSBNetMode(usbNetQuery.output) else {
+            DispatchQueue.main.async { completion(.failure(L10n.tr("无法可靠读取当前 usbnet 模式，未执行写入。"))) }
+            return
+        }
+        guard currentMode != 1 else {
+            snapshot.usbNetMode = 1
+            publishSnapshot(snapshot)
+            DispatchQueue.main.async {
+                completion(.success(L10n.tr("模块已经是 CDC-ECM 模式。")))
+            }
+            return
+        }
+
+        let writeUSBNet = command("AT+QCFG=\"usbnet\",1", timeout: 5_000)
+        guard writeUSBNet.isSuccess else {
+            DispatchQueue.main.async {
+                completion(.failure(writeUSBNet.error ?? L10n.tr("模块拒绝切换到 CDC-ECM 模式。")))
+            }
+            return
+        }
+        let verifyUSBNet = command("AT+QCFG=\"usbnet\"", timeout: 3_000)
+        guard verifyUSBNet.isSuccess,
+              ATResponseParser.parseUSBNetMode(verifyUSBNet.output) == 1 else {
+            DispatchQueue.main.async {
+                completion(.failure(L10n.tr("CDC-ECM 写入后的读回校验失败，未重启模块。")))
+            }
+            return
+        }
+
+        snapshot.usbNetMode = 1
+        _ = command("AT+CFUN=1,1", timeout: 1_000)
+        beginExpectedModuleRestart()
+        DispatchQueue.main.async {
+            completion(.success(L10n.tr("已切换 CDC-ECM，模块正在重新枚举。")))
         }
     }
 
@@ -1450,7 +1520,7 @@ final class ModemService {
     ) {
         queue.async { [weak self] in
             guard let self, self.isOpen else {
-                DispatchQueue.main.async { completion(.failure(L10n.tr("请先插入 QDC507 模块。"))) }
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块未连接"))) }
                 return
             }
             guard !self.callSnapshot.hasCall,
@@ -1484,8 +1554,7 @@ final class ModemService {
             }
 
             if currentMode == targetMode {
-                self.snapshot.imsMode = targetMode
-                self.snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(query.output)
+                self.applyIMSReport(query.output)
                 self.publishSnapshot(self.snapshot)
                 DispatchQueue.main.async {
                     completion(.success(enabled ? L10n.tr("接收来电已经开启。") : L10n.tr("接收来电已经关闭。")))
@@ -1510,8 +1579,7 @@ final class ModemService {
                 return
             }
 
-            self.snapshot.imsMode = targetMode
-            self.snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(verify.output)
+            self.applyIMSReport(verify.output)
             self.publishSnapshot(self.snapshot)
             _ = self.command("AT+CFUN=1,1", timeout: 1_000)
             self.beginExpectedModuleRestart()
@@ -1520,6 +1588,88 @@ final class ModemService {
                     enabled
                         ? L10n.tr("已开启接收来电，模块正在重启。")
                         : L10n.tr("已关闭接收来电，模块正在重启。")
+                ))
+            }
+        }
+    }
+
+    /// Switches voice calls on or off in the firmware of a data-only Quectel
+    /// module. As with the IMS mode, the value is read back before the module
+    /// is restarted to apply it, and nothing is written unless the current
+    /// value is one whose meaning is known.
+    func setVoiceCallsEnabled(
+        _ enabled: Bool,
+        completion: @escaping (ModemActionResult) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, self.isOpen else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块未连接"))) }
+                return
+            }
+            guard self.snapshot.hardwareFamily == .quectelNativeVoice else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("当前模组没有可切换的固件语音开关。")))
+                }
+                return
+            }
+            guard !self.callSnapshot.hasCall,
+                  !self.hasPendingMediaCleanup,
+                  !self.callActionInFlight else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("通话或语音清理期间不能切换语音通话设置。")))
+                }
+                return
+            }
+
+            let query = self.command("AT+QCALLCFG=\"voice_disable\"", timeout: 5_000)
+            guard query.isSuccess,
+                  let currentSetting = ATResponseParser.parseVoiceDisableSetting(query.output),
+                  VoiceCallSwitchPolicy.isEnabled(setting: currentSetting) != nil else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("无法可靠读取固件的语音开关，未执行写入。")))
+                }
+                return
+            }
+
+            let targetSetting = VoiceCallSwitchPolicy.setting(enabled: enabled)
+            if currentSetting == targetSetting {
+                self.snapshot.voiceDisableSetting = currentSetting
+                self.publishSnapshot(self.snapshot)
+                DispatchQueue.main.async {
+                    completion(.success(enabled ? L10n.tr("语音通话已经开启。") : L10n.tr("语音通话已经关闭。")))
+                }
+                return
+            }
+
+            let write = self.command(
+                "AT+QCALLCFG=\"voice_disable\",\(targetSetting)",
+                timeout: 8_000
+            )
+            guard write.isSuccess else {
+                DispatchQueue.main.async {
+                    completion(.failure(write.error ?? L10n.tr("模块拒绝修改语音通话设置。")))
+                }
+                return
+            }
+
+            let verify = self.command("AT+QCALLCFG=\"voice_disable\"", timeout: 5_000)
+            guard verify.isSuccess,
+                  ATResponseParser.parseVoiceDisableSetting(verify.output) == targetSetting else {
+                DispatchQueue.main.async {
+                    completion(.failure(L10n.tr("语音通话设置写入后的回读校验失败，未重启模块。")))
+                }
+                return
+            }
+
+            self.snapshot.voiceDisableSetting = targetSetting
+            self.publishSnapshot(self.snapshot)
+            _ = self.command("AT+CFUN=1,1", timeout: 1_000)
+            self.beginExpectedModuleRestart()
+            DispatchQueue.main.async {
+                completion(.success(
+                    enabled
+                        ? L10n.tr("已开启语音通话，模块正在重启。")
+                        : L10n.tr("已关闭语音通话，模块正在重启。")
                 ))
             }
         }
@@ -1689,7 +1839,7 @@ final class ModemService {
         snapshot.operatorName = nil
         snapshot.registrationState = .unavailable
         snapshot.voiceRegistrationState = .unavailable
-        snapshot.volteSessionAvailable = nil
+        clearVoiceServiceEvidence()
         didQuerySIMIdentity = false
     }
 
@@ -1735,7 +1885,7 @@ final class ModemService {
                     return
                 }
                 self.failCallSetup(
-                    .failure(dial.error ?? self.callFailureMessage(from: dial.output)),
+                    .failure(self.dialFailureMessage(dial)),
                     completion: completion
                 )
                 return
@@ -1856,7 +2006,7 @@ final class ModemService {
                     }
                     self.cancelPendingQDCMediaSession()
                     self.failCallSetup(
-                        .failure(dial.error ?? self.callFailureMessage(from: dial.output)),
+                        .failure(self.dialFailureMessage(dial)),
                         completion: completion
                     )
                     return
@@ -2519,7 +2669,12 @@ final class ModemService {
             case let .present(calls):
                 if let primary = calls.first { applyCallInfo(primary) }
                 if isOpen {
-                    _ = callCommand("ATH", timeout: 3_000)
+                    // ATH is ignored, with OK, while AT+CVHU=1. AT+CHUP always
+                    // ends voice calls, so alternate rather than repeat ATH.
+                    _ = callCommand(
+                        CallATParser.hangUpRetryCommand(attempt: attempt),
+                        timeout: 3_000
+                    )
                 }
                 lastError = L10n.tr("模块仍报告活动通话")
             case let .unknown(error):
@@ -2538,8 +2693,11 @@ final class ModemService {
     }
 
     private func setCallIdle(reason: CallEndReason? = nil, error: String? = nil) {
-        callPresenceWasNeverConfirmed = false
         callSnapshot.phase = callSnapshot.voiceOverUSBSupported ? .idle : .unavailable
+        // Keep what the reason refers to: "the other party hung up" is only
+        // true of a call that had connected.
+        callSnapshot.lastCallDirection = reason == nil ? nil : callSnapshot.direction
+        callSnapshot.lastCallWasConnected = reason != nil && callSnapshot.startedAt != nil
         callSnapshot.direction = nil
         callSnapshot.number = nil
         callSnapshot.audioActive = false
@@ -2566,7 +2724,6 @@ final class ModemService {
         invalidateCallAction()
         callCleanupScheduled = false
         needsPostCallInitialization = false
-        callPresenceWasNeverConfirmed = false
         callURCFramer.reset()
         callPollMisses = 0
         callSnapshot = CallSnapshot(
@@ -2574,6 +2731,17 @@ final class ModemService {
             lastEndReason: hadCall || disconnected ? .deviceDisconnected : nil
         )
         publishCallSnapshot()
+    }
+
+    /// ATD ended with a final result other than OK. NO CARRIER there means
+    /// the network refused or dropped the setup, not that anyone hung up.
+    private func dialFailureMessage(_ dial: CommandResult) -> String {
+        if dial.output.uppercased().contains("NO CARRIER") {
+            return CallEndReason.dialRefusedDescription(
+                voiceServiceCaution: snapshot.voiceServiceCautionText
+            )
+        }
+        return dial.error ?? callFailureMessage(from: dial.output)
     }
 
     private func callFailureMessage(from output: String) -> String {
@@ -2675,7 +2843,7 @@ final class ModemService {
         snapshot.simLastError = nil
         snapshot.registrationState = .unavailable
         snapshot.voiceRegistrationState = .unavailable
-        snapshot.volteSessionAvailable = nil
+        clearVoiceServiceEvidence()
         snapshot.lastError = nil
         publishSnapshot(snapshot)
         resetSMSConnectionState()
@@ -2690,7 +2858,7 @@ final class ModemService {
         snapshot.simLastError = nil
         snapshot.registrationState = .unavailable
         snapshot.voiceRegistrationState = .unavailable
-        snapshot.volteSessionAvailable = nil
+        clearVoiceServiceEvidence()
         snapshot.lastError = nil
         publishSnapshot(snapshot)
     }
@@ -2706,7 +2874,7 @@ final class ModemService {
         snapshot.simLastError = nil
         snapshot.registrationState = .unavailable
         snapshot.voiceRegistrationState = .unavailable
-        snapshot.volteSessionAvailable = nil
+        clearVoiceServiceEvidence()
         consecutiveSIMQueryFailures = 0
         simFastPollingDeadline = Date().addingTimeInterval(30)
         nextSIMRefreshAt = Date()
@@ -2723,7 +2891,7 @@ final class ModemService {
                 publishExpectedRestartWaitingState()
                 return
             }
-            var wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
+            let wasRecoveringCall = callSnapshot.hasCall || hasPendingMediaCleanup
             let result: Int32
             if wasRecoveringCall {
                 guard modemLocationID != 0 else {
@@ -2746,39 +2914,25 @@ final class ModemService {
                     publishExpectedRestartWaitingState()
                     return
                 }
-                var sameDevice = wasRecoveringCall
-                    ? connectedModemMatchesExpectedIdentity()
-                    : recordConnectedModemIdentity()
-                if wasRecoveringCall, !sameDevice,
-                   CallRecoveryPolicy.mayAdoptReenumeratedModule(
-                       callPresenceWasNeverConfirmed: callPresenceWasNeverConfirmed,
-                       hasPendingMediaCleanup: hasPendingMediaCleanup
-                   ) {
-                    // Nothing was ever known about a call on the instance that
-                    // is gone, so there is nothing to protect: start over with
-                    // the module that is attached now.
+                let reopened = CallRecoveryPolicy.reopenedModule(
+                    wasHoldingCall: wasRecoveringCall,
+                    isSameInstance: wasRecoveringCall
+                        ? connectedModemMatchesExpectedIdentity()
+                        : recordConnectedModemIdentity()
+                )
+                if reopened == .replacedInstance {
+                    // The enumeration that carried the call is gone. End the
+                    // call here, which also writes it to the history, and
+                    // take the module that answers now on its own terms.
                     resetCallConnectionState(disconnected: true)
-                    sameDevice = recordConnectedModemIdentity()
-                    wasRecoveringCall = false
-                }
-                if wasRecoveringCall, !sameDevice {
-                    celldock_modem_close(modem)
-                    callSnapshot.phase = .recovering
-                    callSnapshot.lastError = L10n.tr("原通话模块身份不匹配，拒绝连接其他模块。")
-                    publishCallSnapshot()
-                    return
+                    _ = recordConnectedModemIdentity()
                 }
                 resetSMSConnectionState()
                 consumeBufferedURCsBeforeCommands()
-                if wasRecoveringCall {
-                    if sameDevice {
-                        reconcileCallAfterATRecovery()
-                    } else {
-                        pcmSessionEnabled = false
-                        resetCallConnectionState(disconnected: true)
-                        initializeConnectedModem()
-                    }
-                } else {
+                switch reopened {
+                case .sameInstance:
+                    reconcileCallAfterATRecovery()
+                case .fresh, .replacedInstance:
                     if recoverExistingCallBeforeInitialization() {
                         return
                     }
@@ -2905,7 +3059,6 @@ final class ModemService {
             )
             pcmSessionEnabled = false
             needsPostCallInitialization = true
-            callPresenceWasNeverConfirmed = false
             if let primary = calls.first { applyCallInfo(primary) }
             callSnapshot.audioActive = false
             callSnapshot.lastError = L10n.tr("检测到模块中已有通话；为安全起见未自动接管麦克风，请先挂断。")
@@ -2955,7 +3108,6 @@ final class ModemService {
                 return true
             }
             needsPostCallInitialization = true
-            callPresenceWasNeverConfirmed = true
             callSnapshot.phase = .recovering
             callSnapshot.lastError = L10n.tr("启动时无法确认是否存在通话：%@", error)
             publishCallSnapshot()
@@ -3071,6 +3223,16 @@ final class ModemService {
         let pcmCapability: CommandResult? = hardwareFamily == .quectelNativeVoice
             ? command("AT+QPCMV=?", timeout: 3_000)
             : nil
+        if hardwareFamily == .quectelNativeVoice {
+            // Data-only Quectel modules keep the call commands and the PCM
+            // channel but refuse every call. Firmware without this setting
+            // answers ERROR, which leaves it unknown. Never sent to customized
+            // QDC firmware.
+            let voiceDisable = command("AT+QCALLCFG=\"voice_disable\"", timeout: 3_000)
+            snapshot.voiceDisableSetting = voiceDisable.isSuccess
+                ? ATResponseParser.parseVoiceDisableSetting(voiceDisable.output)
+                : nil
+        }
         let supportsRawPCM = pcmCapability?.isSuccess == true &&
             CallATParser.testResponseSupportsRawPCM(pcmCapability?.output ?? "") &&
             modemLocationID != 0
@@ -3094,10 +3256,7 @@ final class ModemService {
                 moduleVoiceRuntime = runtime
                 callMediaBackend = .qdcUAC
                 mediaAvailable = true
-                snapshot.voiceCapability = .supported(
-                    backend: .injectedQDC507,
-                    verified: false
-                )
+                snapshot.voiceCapability = supportedVoiceCapability(backend: .injectedQDC507)
             } catch {
                 callMediaBackend = .none
                 mediaError = L10n.error("QDC507 通话组件尚不可用：%@", underlying: error)
@@ -3111,10 +3270,7 @@ final class ModemService {
             if reset.isSuccess {
                 callMediaBackend = .qpcmv
                 mediaAvailable = true
-                snapshot.voiceCapability = .supported(
-                    backend: .nativeQPCMV,
-                    verified: false
-                )
+                snapshot.voiceCapability = supportedVoiceCapability(backend: .nativeQPCMV)
             } else {
                 callMediaBackend = .none
                 mediaError = reset.error ?? L10n.tr("无法重置 USB 语音会话。")
@@ -3171,8 +3327,7 @@ final class ModemService {
         let usbConfiguration = command("AT+QCFG=\"USBCFG\"", timeout: 3_000)
         snapshot.usbConfiguration = ATResponseParser.parseUSBConfiguration(usbConfiguration.output)
         let ims = command("AT+QCFG=\"ims\"", timeout: 3_000)
-        snapshot.imsMode = ATResponseParser.parseIMSMode(ims.output)
-        snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(ims.output)
+        applyIMSReport(ims.output)
         snapshot.state = .connected
         clearExpectedModuleRestart()
         snapshot.lastError = messageServiceConfigured
@@ -3242,10 +3397,7 @@ final class ModemService {
                 phase: .idle,
                 voiceOverUSBSupported: true
             )
-            snapshot.voiceCapability = .supported(
-                backend: .injectedQDC507,
-                verified: false
-            )
+            snapshot.voiceCapability = supportedVoiceCapability(backend: .injectedQDC507)
             cancelQDCInitializationRetry()
             publishSnapshot(snapshot)
             publishCallSnapshot()
@@ -3290,7 +3442,7 @@ final class ModemService {
             snapshot.simIMSI = nil
             snapshot.registrationState = .unavailable
             snapshot.voiceRegistrationState = .unavailable
-            snapshot.volteSessionAvailable = nil
+            clearVoiceServiceEvidence()
             didQuerySIMIdentity = false
             let isWithinFastPollingWindow = simFastPollingDeadline.map { now < $0 } == true
             if isWithinFastPollingWindow, consecutiveSIMQueryFailures < 3 {
@@ -3317,7 +3469,7 @@ final class ModemService {
             snapshot.simIMSI = nil
             snapshot.registrationState = .unavailable
             snapshot.voiceRegistrationState = .unavailable
-            snapshot.volteSessionAvailable = nil
+            clearVoiceServiceEvidence()
             didQuerySIMIdentity = false
             return
         }
@@ -3385,15 +3537,15 @@ final class ModemService {
 
             let ims = command("AT+QCFG=\"ims\"", timeout: 3_000)
             if ims.isSuccess {
-                snapshot.imsMode = ATResponseParser.parseIMSMode(ims.output)
-                snapshot.volteSessionAvailable = ATResponseParser.parseVoLTESessionAvailable(ims.output)
+                applyIMSReport(ims.output)
+                refreshIMSBearer()
             } else {
-                snapshot.volteSessionAvailable = nil
+                clearVoiceServiceEvidence()
             }
         } else {
             snapshot.registrationState = .unavailable
             snapshot.voiceRegistrationState = .unavailable
-            snapshot.volteSessionAvailable = nil
+            clearVoiceServiceEvidence()
         }
         let operatorResponse = command("AT+COPS?", timeout: 3_000)
         let parsedOperator = ATResponseParser.parseOperator(operatorResponse.output)
@@ -3417,6 +3569,45 @@ final class ModemService {
         }
         snapshot.state = .connected
         publishSnapshot(snapshot)
+    }
+
+    /// Applies one AT+QCFG="ims" response: the IMS mode as reported, and
+    /// VoLTE_cap once it has held long enough to be worth showing.
+    private func applyIMSReport(_ output: String) {
+        snapshot.imsMode = ATResponseParser.parseIMSMode(output)
+        let reported = ATResponseParser.parseVoLTESessionAvailable(output)
+        lastReportedVoLTEAvailable = reported
+        snapshot.volteSessionAvailable = volteReportDebouncer.publishable(reported, now: Date())
+    }
+
+    /// The IMS bearer is the second opinion for a registered module that does
+    /// not report VoLTE as ready. A module that does needs no further
+    /// questions, and one without packet service has no bearer to ask about.
+    private func refreshIMSBearer() {
+        guard lastReportedVoLTEAvailable != true,
+              snapshot.registrationState.hasService else {
+            snapshot.imsBearerActive = nil
+            return
+        }
+        let contexts = command("AT+CGDCONT?", timeout: 5_000)
+        let activation = contexts.isSuccess ? command("AT+CGACT?", timeout: 5_000) : nil
+        guard let activation, activation.isSuccess else {
+            snapshot.imsBearerActive = nil
+            return
+        }
+        snapshot.imsBearerActive = ATResponseParser.parseIMSBearerActive(
+            contexts: contexts.output,
+            activation: activation.output
+        )
+    }
+
+    /// Everything read about voice service belongs to one SIM on one
+    /// registration; none of it may outlive either.
+    private func clearVoiceServiceEvidence() {
+        snapshot.volteSessionAvailable = nil
+        snapshot.imsBearerActive = nil
+        lastReportedVoLTEAvailable = nil
+        volteReportDebouncer.reset()
     }
 
     /// Packet-domain (EPS, or 5G where the firmware reports it separately) and
@@ -3593,7 +3784,6 @@ final class ModemService {
     }
 
     private func applyCallInfo(_ info: ModemCallInfo) {
-        callPresenceWasNeverConfirmed = false
         callSnapshot.direction = info.direction
         if let number = info.number, !number.isEmpty {
             callSnapshot.number = number
@@ -3933,7 +4123,7 @@ final class ModemService {
             return L10n.tr("未知的 USB/AT 错误")
         }
         let value = String(cString: pointer)
-        return value.isEmpty ? L10n.tr("未知的 USB/AT 错误") : value
+        return value.isEmpty ? L10n.tr("未知的 USB/AT 错误") : ModemBridgeErrorText.localized(value)
     }
 
     private func publishSnapshot(_ value: ModemSnapshot) {
@@ -3944,7 +4134,34 @@ final class ModemService {
         }
     }
 
+    /// A backend that initialized is only "supported"; it is "verified" once
+    /// this module has carried a connected call over it, now or earlier.
+    private func supportedVoiceCapability(backend: ModemVoiceBackend) -> ModemVoiceCapability {
+        .supported(
+            backend: backend,
+            verified: voiceVerificationStore.isVerified(
+                imei: snapshot.moduleIMEI,
+                backend: backend
+            )
+        )
+    }
+
+    /// A call that is active with its media path running is the only proof
+    /// that the voice backend works end to end on this module.
+    private func markVoiceCapabilityVerifiedIfNeeded() {
+        guard callSnapshot.phase == .active,
+              callSnapshot.audioActive,
+              case let .supported(backend, verified) = snapshot.voiceCapability,
+              !verified else {
+            return
+        }
+        voiceVerificationStore.markVerified(imei: snapshot.moduleIMEI, backend: backend)
+        snapshot.voiceCapability = snapshot.voiceCapability.verifiedByCall
+        publishSnapshot(snapshot)
+    }
+
     private func publishCallSnapshot() {
+        markVoiceCapabilityVerifiedIfNeeded()
         callSnapshot.mediaCleanupPending = hasPendingMediaCleanup
         callSnapshot.uacMedia = voiceAudio.uacMediaSnapshot
         let value = callSnapshot

@@ -37,6 +37,26 @@ enum CallEndReason: String, Codable, Equatable {
         case .failed: return L10n.tr("通话失败")
         }
     }
+
+    /// What to say when ATD itself answers NO CARRIER. The network never set
+    /// the call up, so nobody hung up; when the line is known to have no
+    /// ready voice service, that is the likely reason and is said as well.
+    static func dialRefusedDescription(voiceServiceCaution: String?) -> String {
+        let notConnected = L10n.tr("未接通")
+        guard let voiceServiceCaution, !voiceServiceCaution.isEmpty else { return notConnected }
+        return "\(notConnected)\n\(voiceServiceCaution)"
+    }
+
+    /// NO CARRIER and an emptied CLCC are all a modem reports when the far
+    /// side or the network ends a call, so `.remoteHangup` also covers an
+    /// outgoing call that never connected. Nobody hung up on a call that was
+    /// never answered; say that it did not connect instead.
+    func localizedDescription(direction: CallDirection?, wasConnected: Bool) -> String {
+        if self == .remoteHangup, direction == .outgoing, !wasConnected {
+            return L10n.tr("未接通")
+        }
+        return localizedDescription
+    }
 }
 
 struct UACMediaSnapshot: Equatable {
@@ -58,6 +78,9 @@ struct CallSnapshot: Equatable {
     var muted = false
     var startedAt: Date?
     var lastEndReason: CallEndReason?
+    /// Direction and outcome of the call `lastEndReason` describes.
+    var lastCallDirection: CallDirection?
+    var lastCallWasConnected = false
     var lastError: String?
     var controlInterfaceBusy = false
     var mediaCleanupPending = false
@@ -78,6 +101,14 @@ struct CallSnapshot: Equatable {
 
     var canSendDTMF: Bool {
         phase == .active
+    }
+
+    /// How the last call ended, worded for the call it actually was.
+    var lastEndDescription: String? {
+        lastEndReason?.localizedDescription(
+            direction: lastCallDirection,
+            wasConnected: lastCallWasConnected
+        )
     }
 }
 
@@ -106,4 +137,20 @@ enum ModemCallEvent: Equatable {
     case connected
     case ended(CallEndReason)
     case pcmFlowReady(Bool)
+}
+
+/// The C bridge reports its errors in English, as diagnostics. The ones a
+/// person runs into during ordinary use are worded for them here; anything
+/// else is passed through unchanged.
+enum ModemBridgeErrorText {
+    static func localized(_ bridgeMessage: String) -> String {
+        switch bridgeMessage {
+        case "AT command timed out before a terminal response":
+            return L10n.tr("模块没有在规定时间内响应 AT 命令。")
+        case "QDC507/Quectel USB module is not connected":
+            return L10n.tr("模块未连接")
+        default:
+            return bridgeMessage
+        }
+    }
 }

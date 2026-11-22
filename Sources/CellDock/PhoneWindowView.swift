@@ -899,7 +899,11 @@ enum RecentCallText {
             return "\(direction) · \(duration(record.duration))"
         }
         guard let reason = record.endReason else { return direction }
-        return "\(direction) · \(reason.localizedDescription)"
+        let description = reason.localizedDescription(
+            direction: record.direction,
+            wasConnected: record.wasAnswered
+        )
+        return "\(direction) · \(description)"
     }
 
     static func duration(_ duration: TimeInterval) -> String {

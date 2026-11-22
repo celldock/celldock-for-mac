@@ -40,9 +40,9 @@ struct DialerView: View {
             keypadView(metrics: metrics)
             bottomActions(metrics: metrics)
 
-            if let reason = appState.call.lastEndReason {
+            if let endDescription = appState.call.lastEndDescription {
                 Label {
-                    Text(verbatim: reason.localizedDescription)
+                    Text(verbatim: endDescription)
                 } icon: {
                     Image(systemName: "info.circle")
                 }
@@ -85,10 +85,26 @@ struct DialerView: View {
                 .font(.appTitle)
                 .lineLimit(1)
 
-            Text(verbatim: callAvailabilityText)
-                .font(.appCallout)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text(verbatim: callAvailabilityText)
+                    .font(.appCallout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                if offersVoiceCallSwitch {
+                    // The switch lives on the SIM page, with its confirmation.
+                    Button(L10n.tr("去开启")) {
+                        model.present(
+                            number: nil,
+                            section: nil,
+                            simModuleID: appState.currentCommunicationModuleID
+                        )
+                    }
+                    .buttonStyle(.link)
+                    .font(.appCallout)
+                    .help(L10n.tr("在 SIM 页开启该模组的语音通话"))
+                }
+            }
         }
         .accessibilityElement(children: .combine)
     }
@@ -224,12 +240,22 @@ struct DialerView: View {
         )
     }
 
+    /// Voice is switched off in the module's firmware and the SIM page can
+    /// switch it on.
+    private var offersVoiceCallSwitch: Bool {
+        let modem = appState.currentCommunicationModemSnapshot
+        return modem.isConnected &&
+            modem.simReady &&
+            modem.voiceServiceAvailability == .disabledByFirmware &&
+            modem.firmwareVoiceCallsEnabled == false &&
+            appState.currentCommunicationModuleID != nil
+    }
+
     private var callAvailabilityText: String {
         let modem = appState.currentCommunicationModemSnapshot
         guard modem.isConnected else { return L10n.tr("当前通信模组未连接") }
-        if modem.voiceServiceAvailability == .likelyDataOnly {
-            return L10n.tr("该 SIM 可能仅支持数据，未检测到可用语音服务。")
-        }
+        if let simBlocker = modem.dialBlockedBySIMText { return simBlocker }
+        if let caution = modem.voiceServiceCautionText { return caution }
         if let operatorName = modem.operatorName, !operatorName.isEmpty {
             let moduleName = appState.currentCommunicationModule?.displayName ?? L10n.tr("当前模组")
             return L10n.tr("可通过 %@ · %@ 呼叫", moduleName, CarrierNameFormatter.localized(operatorName))
@@ -238,7 +264,8 @@ struct DialerView: View {
     }
 
     private var canDial: Bool {
-        appState.call.canDial &&
+        appState.currentCommunicationModemSnapshot.simReady &&
+            appState.call.canDial &&
             !appState.isChangingCall &&
             CallATParser.normalizedDialNumber(model.dialNumber) != nil
     }

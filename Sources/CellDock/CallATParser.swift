@@ -33,6 +33,13 @@ enum CallATParser {
         return "AT+VTS=\"\(tone)\""
     }
 
+    /// The command to send when CLCC still lists the call after the first
+    /// ATH. ATH is a no-op that still answers OK while AT+CVHU=1, whereas
+    /// AT+CHUP is not affected by +CVHU.
+    static func hangUpRetryCommand(attempt: Int) -> String {
+        attempt.isMultiple(of: 2) ? "AT+CHUP" : "ATH"
+    }
+
     static func parseCLCC(_ line: String) -> ModemCallInfo? {
         guard let colon = line.firstIndex(of: ":"),
               line[..<colon].trimmingCharacters(in: .whitespacesAndNewlines)

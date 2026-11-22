@@ -32,6 +32,9 @@ struct SIMManagementView: View {
     @State private var selection: Pane = .overview
     @State private var copiedField: String?
     @State private var pendingIncomingCallsEnabled: Bool?
+    @State private var pendingVoiceCallsEnabled: Bool?
+    /// `SIMPhoneNumberPresentation.revealKey` of the number shown in full.
+    @State private var revealedPhoneNumberKey: String?
     @State private var pendingSIMSlot: Int?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
@@ -134,6 +137,25 @@ struct SIMManagementView: View {
             Text(L10n.tr("CellDock 会在%@中写入并回读 IMS=%lld，校验成功后再重启模块。蜂窝网络将短暂中断。", selectedModule?.displayName ?? L10n.tr("当前模组"), Int64(pendingIncomingCallsEnabled == true ? 1 : 0)))
         }
         .alert(
+            pendingVoiceCallsEnabled == true ? L10n.tr("开启语音通话？") : L10n.tr("关闭语音通话？"),
+            isPresented: Binding(
+                get: { pendingVoiceCallsEnabled != nil },
+                set: { if !$0 { pendingVoiceCallsEnabled = nil } }
+            )
+        ) {
+            Button("取消", role: .cancel) { pendingVoiceCallsEnabled = nil }
+            Button(
+                pendingVoiceCallsEnabled == true ? L10n.tr("重启并开启") : L10n.tr("重启并关闭"),
+                role: pendingVoiceCallsEnabled == false ? .destructive : nil
+            ) {
+                guard let enabled = pendingVoiceCallsEnabled else { return }
+                pendingVoiceCallsEnabled = nil
+                appState.setVoiceCallsEnabled(enabled, moduleID: selectedModuleID)
+            }
+        } message: {
+            Text(voiceCallsConfirmationMessage)
+        }
+        .alert(
             L10n.tr("切换到卡槽 %lld？", Int64(pendingSIMSlot ?? 1)),
             isPresented: Binding(
                 get: { pendingSIMSlot != nil },
@@ -227,7 +249,7 @@ struct SIMManagementView: View {
                                 module: module,
                                 hidesSensitiveIdentifiers: appState.isPresentationPrivacyEnabled,
                                 showsCurrentInternetTag: module.isPrimaryData,
-                                showsIncomingCallsTag: module.modem.imsMode.map { $0 != 0 } ?? false,
+                                showsIncomingCallsTag: module.modem.incomingCallsEffective,
                                 showsESIMTag: module.cardKind == .eUICC
                             )
                             .communicationSelectionHighlight(selectedModuleID == module.id)
@@ -1033,6 +1055,10 @@ struct SIMManagementView: View {
 
             Divider()
             incomingCallsRow
+            if showsVoiceCallsRow {
+                Divider()
+                voiceCallsRow
+            }
             Divider()
             HStack(spacing: 14) {
                 Image(systemName: "message.fill")
@@ -1079,9 +1105,12 @@ struct SIMManagementView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(selectedModule?.carrierName ?? L10n.tr("运营商未识别"))
                         .font(.appHeadline)
-                    Text(displayedPhoneNumber)
-                        .font(.appCallout.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text(displayedPhoneNumber)
+                            .font(.appCallout.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        phoneNumberActions
+                    }
                 }
 
                 Spacer(minLength: 20)
@@ -1210,6 +1239,10 @@ struct SIMManagementView: View {
             networkStatusRow
             Divider()
             incomingCallsRow
+            if showsVoiceCallsRow {
+                Divider()
+                voiceCallsRow
+            }
 
             Label(
                 L10n.tr("更改接收来电设置后将重启%@。", selectedModule?.displayName ?? L10n.tr("当前模组")),
@@ -1372,11 +1405,111 @@ struct SIMManagementView: View {
         .padding(.vertical, 12)
     }
 
+    /// Only modules whose firmware has the voice switch, at a value whose
+    /// meaning is known, get this row.
+    private var showsVoiceCallsRow: Bool {
+        selectedModem.firmwareVoiceCallsEnabled != nil
+    }
+
+    private var voiceCallsRow: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "phone.fill")
+                .font(.appSymbol(.rail))
+                .foregroundStyle(voiceCallsStateColor)
+                .frame(width: 38, height: 38)
+                .background(voiceCallsStateColor.opacity(0.10), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 7) {
+                    Text(L10n.tr("语音通话"))
+                        .font(.appBodyStrong)
+
+                    Text(voiceCallsStateText)
+                        .font(.appCaption.weight(.semibold))
+                        .foregroundStyle(voiceCallsStateColor)
+                }
+
+                Text(voiceCallsDetail)
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 16)
+
+            if appState.isChangingVoiceCallSetting {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Toggle(L10n.tr("开启语音通话"), isOn: voiceCallsBinding)
+                .labelsHidden()
+                .toggleStyle(.adaptiveGlass)
+                .disabled(!canChangeVoiceCalls)
+                .accessibilityIdentifier("SIMManagementVoiceCallsToggle")
+                .help(L10n.tr("控制模块固件是否允许语音通话"))
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var voiceCallsBinding: Binding<Bool> {
+        Binding(
+            get: {
+                pendingVoiceCallsEnabled ??
+                    selectedModem.firmwareVoiceCallsEnabled ?? false
+            },
+            set: { pendingVoiceCallsEnabled = $0 }
+        )
+    }
+
+    private var canChangeVoiceCalls: Bool {
+        selectedModem.isConnected &&
+            selectedModem.firmwareVoiceCallsEnabled != nil &&
+            !appState.moduleHasCall(selectedModuleID) &&
+            !selectedEUICC.isBusy &&
+            !appState.isChangingVoiceCallSetting &&
+            !appState.isChangingIncomingCallSetting
+    }
+
+    private var voiceCallsDetail: String {
+        guard selectedModem.isConnected else { return L10n.tr("模块就绪后可配置语音通话") }
+        guard !appState.moduleHasCall(selectedModuleID) else { return L10n.tr("通话期间不可更改") }
+        return selectedModem.firmwareVoiceCallsEnabled == true
+            ? L10n.tr("固件已允许语音通话。移远官方未对该模组的语音通话提供支持。")
+            : L10n.tr("固件已关闭语音通话，目前只能上网和收发短信。")
+    }
+
+    private var voiceCallsStateText: String {
+        if appState.isChangingVoiceCallSetting { return L10n.tr("更新中") }
+        return selectedModem.firmwareVoiceCallsEnabled == true ? L10n.tr("已开启") : L10n.tr("已关闭")
+    }
+
+    private var voiceCallsStateColor: Color {
+        if appState.isChangingVoiceCallSetting { return .blue }
+        return selectedModem.firmwareVoiceCallsEnabled == true ? .green : .secondary
+    }
+
+    private var voiceCallsConfirmationMessage: String {
+        let moduleName = selectedModule?.displayName ?? L10n.tr("当前模组")
+        if pendingVoiceCallsEnabled == false {
+            return L10n.tr(
+                "CellDock 会在%@中写入并回读 voice_disable=%lld，校验成功后再重启模块，蜂窝网络将短暂中断。之后该模组无法拨打和接听电话。",
+                moduleName,
+                Int64(VoiceCallSwitchPolicy.disabledSetting)
+            )
+        }
+        return L10n.tr(
+            "CellDock 会在%@中写入并回读 voice_disable=%lld，校验成功后再重启模块，蜂窝网络将短暂中断。移远官方未对该模组的语音通话提供支持。",
+            moduleName,
+            Int64(VoiceCallSwitchPolicy.enabledSetting)
+        )
+    }
+
     private var incomingCallsBinding: Binding<Bool> {
         Binding(
             get: {
                 pendingIncomingCallsEnabled ??
-                    selectedModem.imsMode.map { $0 != 0 } ?? false
+                    selectedModem.incomingCallsForcedOn ?? false
             },
             set: { pendingIncomingCallsEnabled = $0 }
         )
@@ -1395,7 +1528,25 @@ struct SIMManagementView: View {
         guard !appState.moduleHasCall(selectedModuleID) else { return L10n.tr("通话期间不可更改") }
         guard !selectedEUICC.isBusy else { return L10n.tr("eSIM 操作期间不可更改") }
         guard let mode = selectedModem.imsMode else { return L10n.tr("正在读取模块 IMS 状态") }
-        return mode == 0 ? L10n.tr("模块不会接收运营商来电") : L10n.tr("允许模块接收运营商来电")
+        switch mode {
+        case 1:
+            return L10n.tr("允许模块接收运营商来电")
+        case 0:
+            // IMS=0 leaves IMS to the carrier configuration (MBN); whether
+            // calls arrive depends on what that configuration enabled.
+            switch selectedModem.voiceServiceAvailability {
+            case .available:
+                return L10n.tr("IMS 由运营商配置启用，模块可以接收来电")
+            case .volteNotReady:
+                return L10n.tr("IMS 由运营商配置决定，模块未报告 VoLTE 就绪；开启后将强制启用 IMS")
+            case .disabledByFirmware, .imsDisabled, .likelyDataOnly:
+                return L10n.tr("模块不会接收运营商来电")
+            case .unknown, .unavailable:
+                return L10n.tr("IMS 由运营商配置决定")
+            }
+        default:
+            return L10n.tr("模块不会接收运营商来电")
+        }
     }
 
     private var incomingCallStateText: String {
@@ -1408,8 +1559,8 @@ struct SIMManagementView: View {
     private var incomingCallStateColor: Color {
         if appState.isChangingIncomingCallSetting { return .blue }
         guard selectedModem.isConnected else { return .secondary }
-        guard let mode = selectedModem.imsMode else { return .blue }
-        return mode == 0 ? .secondary : .green
+        guard selectedModem.imsMode != nil else { return .blue }
+        return selectedModem.incomingCallsEffective ? .green : .secondary
     }
 
     private var incomingCallsHelpText: String {
@@ -1596,7 +1747,7 @@ struct SIMManagementView: View {
 
     private var basicInformationCard: some View {
         VStack(spacing: 0) {
-            informationRow(title: "电话号码", value: displayedPhoneNumber)
+            phoneNumberRow
             Divider()
             informationRow(title: "运营商", value: selectedModem.operatorName ?? L10n.tr("尚未读取"))
             Divider()
@@ -1763,9 +1914,85 @@ struct SIMManagementView: View {
         if appState.isPresentationPrivacyEnabled {
             return L10n.tr("本机号码已隐藏")
         }
-        let digits = number.filter { $0 >= "0" && $0 <= "9" }
-        guard digits.count >= 7 else { return number }
-        return "\(digits.prefix(3)) •••• \(digits.suffix(4))"
+        return isPhoneNumberRevealed ? number : SIMPhoneNumberPresentation.masked(number)
+    }
+
+    private var phoneNumberRevealKey: String? {
+        SIMPhoneNumberPresentation.revealKey(
+            moduleID: selectedModuleID?.rawValue,
+            number: selectedModem.simPhoneNumber
+        )
+    }
+
+    /// Presentation privacy always wins over a reveal made before it was
+    /// switched on.
+    private var isPhoneNumberRevealed: Bool {
+        guard !appState.isPresentationPrivacyEnabled,
+              let key = phoneNumberRevealKey else {
+            return false
+        }
+        return revealedPhoneNumberKey == key
+    }
+
+    /// The eye and copy buttons that go with the SIM's own number.
+    private var phoneNumberActions: some View {
+        let number = selectedModem.simPhoneNumber
+        let isUnavailable = number == nil || appState.isPresentationPrivacyEnabled
+        let tint = isUnavailable ? Color.secondary.opacity(0.45) : Color.secondary
+        return HStack(spacing: 8) {
+            Button {
+                revealedPhoneNumberKey = isPhoneNumberRevealed ? nil : phoneNumberRevealKey
+            } label: {
+                Image(systemName: isPhoneNumberRevealed ? "eye.slash" : "eye")
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(isUnavailable)
+            .help(phoneNumberRevealHelp)
+            .accessibilityLabel(phoneNumberRevealHelp)
+            .accessibilityIdentifier("SIMManagementPhoneNumberRevealButton")
+
+            Button {
+                guard let number else { return }
+                copy(number, field: "电话号码")
+            } label: {
+                Image(systemName: copiedField == "电话号码" ? "checkmark" : "doc.on.doc")
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(tint)
+            }
+            .buttonStyle(.plain)
+            .disabled(isUnavailable)
+            .help(identifierCopyHelp(title: "电话号码", value: number))
+            .accessibilityLabel(identifierCopyHelp(title: "电话号码", value: number))
+            .accessibilityIdentifier("SIMManagementPhoneNumberCopyButton")
+        }
+    }
+
+    private var phoneNumberRevealHelp: String {
+        if selectedModem.simPhoneNumber == nil {
+            return L10n.tr("%@尚未读取", L10n.tr("电话号码"))
+        }
+        if appState.isPresentationPrivacyEnabled {
+            return L10n.tr("关闭演示隐私保护后可显示完整号码")
+        }
+        return isPhoneNumberRevealed ? L10n.tr("隐藏完整号码") : L10n.tr("显示完整号码")
+    }
+
+    private var phoneNumberRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(L10n.tr("电话号码"))
+                .foregroundStyle(.primary)
+            Spacer(minLength: 20)
+            Text(displayedPhoneNumber)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+            phoneNumberActions
+        }
+        .font(.appCallout)
+        .padding(.vertical, 9)
     }
 
     private var sidebarSIMTitle: String {
@@ -1919,6 +2146,9 @@ struct SIMManagementView: View {
         switch selectedModem.voiceServiceAvailability {
         case .unavailable: return L10n.tr("不可用")
         case .available: return L10n.tr("可用")
+        case .disabledByFirmware: return L10n.tr("固件已关闭语音")
+        case .imsDisabled: return L10n.tr("未开启 IMS")
+        case .volteNotReady: return L10n.tr("VoLTE 未就绪")
         case .likelyDataOnly: return L10n.tr("可能仅数据")
         case .unknown: return L10n.tr("语音能力未知")
         }
@@ -1927,7 +2157,7 @@ struct SIMManagementView: View {
     private var voiceServiceColor: Color {
         switch selectedModem.voiceServiceAvailability {
         case .available: return .green
-        case .likelyDataOnly: return .orange
+        case .disabledByFirmware, .imsDisabled, .volteNotReady, .likelyDataOnly: return .orange
         case .unavailable, .unknown: return .secondary
         }
     }

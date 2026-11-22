@@ -55,6 +55,14 @@ enum CellularRegistrationState: Equatable {
 enum VoiceServiceAvailability: Equatable {
     case unavailable
     case available
+    /// The module's firmware has voice calls switched off. Dialing answers
+    /// NO CARRIER whatever the SIM and the network would allow.
+    case disabledByFirmware
+    /// The module's IMS is switched off or was never brought up, so there is
+    /// no VoLTE to place a call over. The SIM is not the problem.
+    case imsDisabled
+    /// IMS is running but the module does not report VoLTE as ready.
+    case volteNotReady
     case likelyDataOnly
     case unknown
 }
@@ -97,6 +105,121 @@ enum ModemVoiceCapability: Equatable {
     case unsupported(reason: String)
     case probeFailed(reason: String)
     case initializationFailed(reason: String)
+
+    /// The same capability once a call has connected over it. Anything other
+    /// than an unverified `.supported` is returned unchanged.
+    var verifiedByCall: ModemVoiceCapability {
+        guard case let .supported(backend, _) = self else { return self }
+        return .supported(backend: backend, verified: true)
+    }
+}
+
+/// Remembers which modules have carried a connected call, so "verified by a
+/// call" survives a reconnect and an app restart instead of resetting every
+/// time the module is initialized.
+///
+/// Keyed by IMEI and voice backend: a different module, or the same module
+/// after a change that switches its backend, has to prove itself again.
+struct VoiceCapabilityVerificationStore {
+    static let defaultsKey = "VoiceCapabilityVerifiedModules.v1"
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    static func key(imei: String?, backend: ModemVoiceBackend) -> String? {
+        guard let imei = imei?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !imei.isEmpty else {
+            return nil
+        }
+        switch backend {
+        case .nativeQPCMV: return "\(imei)|qpcmv"
+        case .injectedQDC507: return "\(imei)|qdc507"
+        }
+    }
+
+    func isVerified(imei: String?, backend: ModemVoiceBackend) -> Bool {
+        guard let key = Self.key(imei: imei, backend: backend) else { return false }
+        return (defaults.stringArray(forKey: Self.defaultsKey) ?? []).contains(key)
+    }
+
+    func markVerified(imei: String?, backend: ModemVoiceBackend) {
+        guard let key = Self.key(imei: imei, backend: backend) else { return }
+        var keys = defaults.stringArray(forKey: Self.defaultsKey) ?? []
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        defaults.set(keys, forKey: Self.defaultsKey)
+    }
+}
+
+/// How the SIM's own number is shown on the SIM page.
+enum SIMPhoneNumberPresentation {
+    /// "861 •••• 3173": enough to recognize the line, not enough to read the
+    /// number off a shared screen. Numbers too short to mask are left as is.
+    static func masked(_ number: String) -> String {
+        let digits = number.filter { $0 >= "0" && $0 <= "9" }
+        guard digits.count >= 7 else { return number }
+        return "\(digits.prefix(3)) •••• \(digits.suffix(4))"
+    }
+
+    /// What a reveal belongs to: one number on one module. Selecting another
+    /// module, or the SIM reporting another number, no longer matches the
+    /// key that was revealed, so the new number starts out masked.
+    static func revealKey(moduleID: String?, number: String?) -> String? {
+        guard let number, !number.isEmpty else { return nil }
+        return "\(moduleID ?? "")|\(number)"
+    }
+}
+
+/// AT+QCALLCFG="voice_disable" on data-only Quectel modules. Two of its four
+/// values are understood: 1, which the RM520N-GL ships with and which makes
+/// every ATD answer NO CARRIER, and 2, which Quectel support gives for
+/// enabling calls. Nothing is offered or written for the others.
+enum VoiceCallSwitchPolicy {
+    static let disabledSetting = 1
+    static let enabledSetting = 2
+
+    static func isEnabled(setting: Int?) -> Bool? {
+        switch setting {
+        case disabledSetting: return false
+        case enabledSetting: return true
+        default: return nil
+        }
+    }
+
+    static func setting(enabled: Bool) -> Int {
+        enabled ? enabledSetting : disabledSetting
+    }
+}
+
+/// Holds back "VoLTE is not available" until the module has kept saying so
+/// for a while. IMS registers a few seconds after the packet
+/// domain does, so the first reads after a start, a SIM change or a slot
+/// switch are 0 on every healthy line and must not raise a warning.
+struct VoLTEReportDebouncer: Equatable {
+    /// Two regular radio refreshes after the first negative reading.
+    static let settleInterval: TimeInterval = 20
+
+    private(set) var firstNegativeAt: Date?
+
+    mutating func reset() {
+        firstNegativeAt = nil
+    }
+
+    /// Feeds one AT+QCFG="ims" reading; returns what may be published.
+    mutating func publishable(_ reported: Bool?, now: Date) -> Bool? {
+        guard reported == false else {
+            firstNegativeAt = nil
+            return reported
+        }
+        guard let firstNegativeAt else {
+            self.firstNegativeAt = now
+            return nil
+        }
+        return now.timeIntervalSince(firstNegativeAt) >= Self.settleInterval ? false : nil
+    }
 }
 
 enum CellularDataConnectionState: Equatable {
@@ -300,18 +423,31 @@ enum CallRecoveryPolicy {
         isExpectingModuleRestart
     }
 
-    /// Whether a module that came back as a new USB enumeration may be
-    /// adopted while the service is still in call recovery.
+    /// What a module that just opened at the expected USB location is to a
+    /// call the service is still holding.
+    enum ReopenedModule: Equatable {
+        /// No call was being held. Initialize it like any attached module.
+        case fresh
+        /// The same USB enumeration answered again, so the call may still be
+        /// up on it. Reconcile over AT+CLCC.
+        case sameInstance
+        /// A new enumeration answered where the call's module used to be.
+        case replacedInstance
+    }
+
+    /// A call lives on one USB enumeration of its module. Once a different
+    /// enumeration answers at that location, the instance that carried the
+    /// call has left the bus: nothing can reach the call, or the cleanup
+    /// still owed to that instance, ever again. Holding the call open then
+    /// protects nothing and left the AT session down until the app was
+    /// restarted, with the call missing from the history.
     ///
-    /// A confirmed call stays bound to its module instance: another module
-    /// must never be mistaken for it. A recovery that only exists because the
-    /// call state could not be read protects nothing once that instance is
-    /// gone, and refusing the new one left the AT session down for good.
-    static func mayAdoptReenumeratedModule(
-        callPresenceWasNeverConfirmed: Bool,
-        hasPendingMediaCleanup: Bool
-    ) -> Bool {
-        callPresenceWasNeverConfirmed && !hasPendingMediaCleanup
+    /// The call is therefore over. The new enumeration is never taken for
+    /// its continuation: it is opened as a freshly attached module, which
+    /// includes the check for a call it may itself be carrying.
+    static func reopenedModule(wasHoldingCall: Bool, isSameInstance: Bool) -> ReopenedModule {
+        guard wasHoldingCall else { return .fresh }
+        return isSameInstance ? .sameInstance : .replacedInstance
     }
 }
 
@@ -380,6 +516,13 @@ struct ModemSnapshot: Equatable {
     /// Quectel AT+QCFG="ims" VoLTE_cap. A value of 1 means a VoLTE
     /// session is available, not merely that IMS was enabled in settings.
     var volteSessionAvailable: Bool?
+    /// AT+QCALLCFG="voice_disable" as reported, on firmware that has it. 1 is
+    /// what a data-only RM520N-GL ships with and makes ATD answer NO CARRIER;
+    /// 2 is the value Quectel support gives for enabling calls.
+    var voiceDisableSetting: Int?
+    /// Whether an IMS PDN is up (the IMS APN context is active). It shows
+    /// that IMS is running, not that IMS registration succeeded.
+    var imsBearerActive: Bool?
     var usbConfiguration: ModemUSBConfiguration?
     var endpointDescription: String?
     var lastError: String?
@@ -407,21 +550,91 @@ struct ModemSnapshot: Equatable {
         simState == .ready
     }
 
+    /// Why this SIM cannot place a call right now, or nil when it is ready.
+    /// Shared by every dialer so they cannot disagree about the SIM.
+    var dialBlockedBySIMText: String? {
+        switch simState {
+        case .ready: return nil
+        case .pinRequired: return L10n.tr("需要 SIM PIN 后才能拨号")
+        case .pukRequired: return L10n.tr("需要 SIM PUK 后才能拨号")
+        case .absent: return L10n.tr("插入 SIM 卡后才能拨号")
+        case .queryFailed: return L10n.tr("确认 SIM 状态后才能拨号")
+        case .unavailable, .initializing: return L10n.tr("正在等待 SIM 卡就绪")
+        }
+    }
+
     var voiceServiceAvailability: VoiceServiceAvailability {
         guard simReady else { return .unavailable }
         if volteSessionAvailable == true {
             return .available
+        }
+        if voiceDisableSetting == 1 {
+            // A firmware setting, not a state: it holds with or without
+            // registration and no other reading can argue with it.
+            return .disabledByFirmware
         }
 
         // CREG only reports network registration; it does not prove that the
         // subscription authorizes voice calls. Some LTE modules also report
         // CREG registered/roaming for data-only SIMs. Missing CNUM/MSISDN is
         // likewise only supporting information and is intentionally ignored.
-        if registrationState.hasService,
-           volteSessionAvailable == false {
-            return .likelyDataOnly
+        guard registrationState.hasService else { return .unknown }
+
+        guard volteSessionAvailable == false else { return .unknown }
+
+        // VoLTE is not ready. Say why, as far as the module lets us tell: a
+        // SIM is only suspected once IMS is known to be switched on and still
+        // has no bearer.
+        switch imsMode {
+        case 2:
+            return .imsDisabled
+        case 0:
+            // IMS follows the carrier configuration (MBN). A bearer means the
+            // MBN enabled it; without one it was never brought up.
+            return imsBearerActive == true ? .volteNotReady : .imsDisabled
+        default:
+            return imsBearerActive == true ? .volteNotReady : .likelyDataOnly
         }
-        return .unknown
+    }
+
+    /// One line for a dialer when a call is unlikely to connect, nil when
+    /// there is nothing to warn about. Shared so every dialer says the same.
+    var voiceServiceCautionText: String? {
+        switch voiceServiceAvailability {
+        case .disabledByFirmware:
+            return L10n.tr("该模组的固件已关闭语音通话，目前仅支持数据。")
+        case .likelyDataOnly:
+            return L10n.tr("该 SIM 可能仅支持数据，未检测到可用语音服务。")
+        case .imsDisabled:
+            return L10n.tr("模组未开启 IMS，请在 SIM 页开启“接收来电”。")
+        case .volteNotReady:
+            return L10n.tr("模组未报告 VoLTE 就绪，通话可能无法接通。")
+        case .available, .unknown, .unavailable:
+            return nil
+        }
+    }
+
+    /// Whether the firmware's voice switch can be offered, and where it
+    /// stands: nil when this module has no such switch or reports a value
+    /// whose meaning is not known.
+    var firmwareVoiceCallsEnabled: Bool? {
+        VoiceCallSwitchPolicy.isEnabled(setting: voiceDisableSetting)
+    }
+
+    /// AT+QCFG="ims" 1 forces IMS on. 0 leaves it to the carrier
+    /// configuration and 2 forces it off, so neither is "switched on".
+    var incomingCallsForcedOn: Bool? {
+        imsMode.map { $0 == 1 }
+    }
+
+    /// Whether carrier calls can reach the module as far as it reports: IMS
+    /// forced on, or left to the carrier configuration with voice available.
+    var incomingCallsEffective: Bool {
+        switch imsMode {
+        case 1: return true
+        case 0: return voiceServiceAvailability == .available
+        default: return false
+        }
     }
 
     var operationalState: ModemOperationalState {
@@ -450,7 +663,7 @@ struct ModemSnapshot: Equatable {
             return .ready
         case .inspecting:
             return .initializing
-        case .needsIdentityConversion, .needsECM, .unsupportedIdentity,
+        case .needsIdentityConversion, .needsECM, .needsECMSwitch, .unsupportedIdentity,
              .unsupportedUSBConfiguration, .unsupportedUSBNetMode:
             return .configurationRequired
         case .insertModule:
@@ -484,11 +697,12 @@ struct ModemSnapshot: Equatable {
             return .unsupportedUSBConfiguration(usbConfiguration.compactDescription)
         }
         if normalizedIdentity == "2C7C:0801" {
-            // RM520N-GL: CellDock never writes USB configuration to this
-            // module, so any USBCFG is accepted and only ECM (usbnet 1) is
-            // usable. Other net modes are reported, never converted.
+            // RM520N-GL: CellDock never writes USBCFG to this module, so
+            // any USBCFG is accepted. Only ECM (usbnet 1) works on macOS;
+            // from another net mode the switch is offered, and usbnet is
+            // the one thing it writes.
             guard let usbNetMode else { return .inspecting }
-            return usbNetMode == 1 ? .ready : .unsupportedUSBNetMode(usbNetMode)
+            return usbNetMode == 1 ? .ready : .needsECMSwitch(usbNetMode)
         }
         guard normalizedIdentity == "2C7C:0125" else {
             return .unsupportedIdentity(normalizedIdentity)
@@ -518,6 +732,9 @@ enum ModemInitialSetupState: Equatable {
     case inspecting
     case needsIdentityConversion
     case needsECM
+    /// An RM520N-GL in another network mode. Only usbnet has to change; the
+    /// associated value is the mode it is in now.
+    case needsECMSwitch(Int)
     case ready
     case unsupportedIdentity(String)
     case unsupportedUSBConfiguration(String)
