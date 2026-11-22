@@ -25,6 +25,25 @@ struct InCallCardModel: Equatable {
     var isSavingRecording = false
     var recordingError: String?
     var error: String?
+
+    /// The call has been answered. It stays true while a connected call is
+    /// ending or its state is being re-read, so the card does not fold up
+    /// and open again in the middle of a conversation.
+    var isConnected: Bool {
+        switch phase {
+        case .active:
+            return true
+        case .ending, .recovering:
+            return startedAt != nil
+        case .incoming, .dialing, .alerting, .idle, .unavailable, .error:
+            return false
+        }
+    }
+
+    /// Waiting for someone to pick up, on either end.
+    var isRinging: Bool {
+        phase == .dialing || phase == .alerting || phase == .incoming
+    }
 }
 
 struct InCallCardActions {
@@ -42,7 +61,8 @@ struct InCallCardActions {
 struct InCallCard: View {
     let model: InCallCardModel
     let layout: InCallLayout
-    var width: CGFloat = InCallLayout.cardWidth
+    /// Narrower than the layout's width when the window is.
+    var maximumWidth: CGFloat = .infinity
     /// Tones sent during this call, shown above the keypad.
     var digits = ""
     /// The key to light up, when a tone was just sent from the keyboard.
@@ -71,27 +91,26 @@ struct InCallCard: View {
 
             Spacer(minLength: layout.minimumGapAboveWaveform)
 
-            if isActive {
-                if layout.showsWaveform {
-                    LiveCallWaveformPanel(
-                        monitor: monitor,
-                        layout: layout,
-                        muted: model.muted,
-                        audioActive: model.audioActive
-                    )
-                    .transition(.opacity)
-                }
+            if layout.showsWaveform {
+                LiveCallWaveformPanel(
+                    monitor: monitor,
+                    layout: layout,
+                    muted: model.muted,
+                    audioActive: model.audioActive,
+                    isActive: isActive
+                )
+                .transition(revealTransition)
+            }
 
-                if layout.keypadOpen {
-                    InCallKeypad(
-                        layout: layout,
-                        digits: digits,
-                        flashedTone: flashedTone,
-                        send: actions.sendTone,
-                        clear: actions.clearDigits
-                    )
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 16)))
-                }
+            if layout.keypadOpen {
+                InCallKeypad(
+                    layout: layout,
+                    digits: digits,
+                    flashedTone: flashedTone,
+                    send: actions.sendTone,
+                    clear: actions.clearDigits
+                )
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 16)))
             }
 
             Spacer(minLength: layout.minimumGapAboveControls)
@@ -109,10 +128,18 @@ struct InCallCard: View {
         // taller instead of being clipped.
         .frame(minHeight: layout.cardHeight)
         .fixedSize(horizontal: false, vertical: true)
-        .adaptiveGlassSurface(cornerRadius: 34, treatment: .clear)
+        // What appears when the call connects is laid out where it will end
+        // up, which is outside the card while the card is still opening. The
+        // clip lets the growing edge uncover it instead.
+        .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
+        .adaptiveGlassSurface(cornerRadius: Self.cornerRadius, treatment: .clear)
     }
 
+    private static let cornerRadius: CGFloat = 34
+
     private var isActive: Bool { model.phase == .active }
+
+    private var width: CGFloat { min(layout.cardWidth, maximumWidth) }
 
     // MARK: - Top row
 
@@ -139,6 +166,7 @@ struct InCallCard: View {
                 }
             } else {
                 Text(verbatim: InCallPalette.title(for: model.phase))
+                    .contentTransition(.opacity)
             }
         }
         .font(.appCaptionStrong)
@@ -161,6 +189,12 @@ struct InCallCard: View {
                 isLive: isActive,
                 monitor: monitor
             )
+            .background {
+                CallRingingPulse(
+                    tint: InCallPalette.tint(for: model.phase),
+                    isRinging: model.isRinging
+                )
+            }
             .padding(.top, layout.heroTopGap)
 
             Text(verbatim: model.title)
@@ -177,19 +211,26 @@ struct InCallCard: View {
                     .padding(.top, 2)
             }
 
-            if isActive, let startedAt = model.startedAt {
-                Text(startedAt, style: .timer)
-                    .font(.appTitle.weight(.medium).monospacedDigit())
-                    .multilineTextAlignment(.center)
-                    .padding(.top, layout.heroTimerGap)
-            } else if !model.routeSummary.isEmpty {
+            // The timer and the line it replaces share one place and stay in
+            // the hierarchy, so they cross-fade where the hero is going
+            // instead of one being left behind while the card opens.
+            let showsTimer = model.isConnected && model.startedAt != nil
+            ZStack {
                 Text(verbatim: model.routeSummary)
                     .font(.appCallout)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
-                    .padding(.top, layout.heroTimerGap + 2)
+                    .opacity(showsTimer ? 0 : 1)
+                    .accessibilityHidden(showsTimer)
+
+                Text(model.startedAt ?? .now, style: .timer)
+                    .font(.appTitle.weight(.medium).monospacedDigit())
+                    .multilineTextAlignment(.center)
+                    .opacity(showsTimer ? 1 : 0)
+                    .accessibilityHidden(!showsTimer)
             }
+            .padding(.top, layout.heroTimerGap)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
@@ -218,7 +259,7 @@ struct InCallCard: View {
 
             Spacer(minLength: 8)
 
-            if isActive, let startedAt = model.startedAt {
+            if model.isConnected, let startedAt = model.startedAt {
                 Text(startedAt, style: .timer)
                     .font(.appTitle.weight(.medium).monospacedDigit())
                     .multilineTextAlignment(.trailing)
@@ -273,84 +314,110 @@ struct InCallCard: View {
 
     // MARK: - Controls
 
+    /// One row for every state. The hang-up button is always the same view,
+    /// so when the call connects it slides to its place while the other
+    /// controls grow in beside it. The others are inserted and removed, not
+    /// hidden: glass keeps drawing under a zero opacity.
     @ViewBuilder
     private var controls: some View {
         let diameter = layout.controlDiameter
-        switch model.phase {
-        case .incoming:
-            AdaptiveGlassContainer(spacing: 4) {
-                HStack(alignment: .top, spacing: InCallLayout.controlPitch / 2) {
-                    InCallControlButton(
-                        title: L10n.tr("拒接"),
-                        systemImage: "phone.down.fill",
-                        style: .prominent(InCallPalette.hangUp),
-                        isEnabled: model.canHangUp,
-                        diameter: diameter,
-                        action: actions.hangUp
-                    )
-                    InCallControlButton(
-                        title: L10n.tr("接听"),
-                        systemImage: "phone.fill",
-                        style: .prominent(InCallPalette.answer),
-                        isEnabled: model.canAnswer,
-                        diameter: diameter,
-                        action: actions.answer
-                    )
-                }
-            }
-
-        case .active:
+        let incoming = model.phase == .incoming
+        if model.phase == .idle || model.phase == .unavailable || model.phase == .error {
+            EmptyView()
+        } else {
             AdaptiveGlassContainer(spacing: 4) {
                 HStack(alignment: .top, spacing: 0) {
+                    if model.isConnected {
+                        InCallControlButton(
+                            title: model.muted ? L10n.tr("取消静音") : L10n.tr("静音"),
+                            systemImage: model.muted ? "mic.slash.fill" : "mic.fill",
+                            style: model.muted ? .selected(CallVoiceTint.local) : .plain,
+                            isEnabled: isActive,
+                            diameter: diameter,
+                            action: actions.toggleMute
+                        )
+                        .transition(controlTransition(order: 0))
+
+                        InCallControlButton(
+                            title: L10n.tr("拨号盘"),
+                            systemImage: "circle.grid.3x3.fill",
+                            style: layout.keypadOpen ? .selected(CallVoiceTint.local) : .plain,
+                            isEnabled: isActive,
+                            diameter: diameter,
+                            action: actions.toggleKeypad
+                        )
+                        .transition(controlTransition(order: 1))
+
+                        InCallControlButton(
+                            title: model.isRecording ? L10n.tr("停止录音") : L10n.tr("录音"),
+                            systemImage: model.isRecording ? "stop.circle.fill" : "record.circle",
+                            style: model.isRecording ? .selected(InCallPalette.recording) : .plain,
+                            isEnabled: model.canToggleRecording,
+                            diameter: diameter,
+                            help: model.isRecording
+                                ? L10n.tr("停止并保存本次录音")
+                                : L10n.tr("录制通话双方声音"),
+                            action: actions.toggleRecording
+                        )
+                        .transition(controlTransition(order: 2))
+                    }
+
                     InCallControlButton(
-                        title: model.muted ? L10n.tr("取消静音") : L10n.tr("静音"),
-                        systemImage: model.muted ? "mic.slash.fill" : "mic.fill",
-                        style: model.muted ? .selected(CallVoiceTint.local) : .plain,
-                        diameter: diameter,
-                        action: actions.toggleMute
-                    )
-                    InCallControlButton(
-                        title: L10n.tr("拨号盘"),
-                        systemImage: "circle.grid.3x3.fill",
-                        style: layout.keypadOpen ? .selected(CallVoiceTint.local) : .plain,
-                        diameter: diameter,
-                        action: actions.toggleKeypad
-                    )
-                    InCallControlButton(
-                        title: model.isRecording ? L10n.tr("停止录音") : L10n.tr("录音"),
-                        systemImage: model.isRecording ? "stop.circle.fill" : "record.circle",
-                        style: model.isRecording ? .selected(InCallPalette.recording) : .plain,
-                        isEnabled: model.canToggleRecording,
-                        diameter: diameter,
-                        help: model.isRecording
-                            ? L10n.tr("停止并保存本次录音")
-                            : L10n.tr("录制通话双方声音"),
-                        action: actions.toggleRecording
-                    )
-                    InCallControlButton(
-                        title: L10n.tr("挂断"),
+                        title: incoming ? L10n.tr("拒接") : L10n.tr("挂断"),
                         systemImage: "phone.down.fill",
                         style: .prominent(InCallPalette.hangUp),
                         isEnabled: model.canHangUp,
                         diameter: diameter,
                         action: actions.hangUp
                     )
+
+                    if incoming {
+                        // Half a pitch of air between declining and answering.
+                        Color.clear
+                            .frame(width: InCallLayout.controlPitch / 2, height: 1)
+
+                        InCallControlButton(
+                            title: L10n.tr("接听"),
+                            systemImage: "phone.fill",
+                            style: .prominent(InCallPalette.answer),
+                            isEnabled: model.canAnswer,
+                            diameter: diameter,
+                            action: actions.answer
+                        )
+                        .transition(.opacity)
+                    }
                 }
             }
-
-        case .dialing, .alerting, .ending, .recovering:
-            InCallControlButton(
-                title: L10n.tr("挂断"),
-                systemImage: "phone.down.fill",
-                style: .prominent(InCallPalette.hangUp),
-                isEnabled: model.canHangUp,
-                diameter: diameter,
-                action: actions.hangUp
-            )
-
-        case .idle, .unavailable, .error:
-            EmptyView()
         }
+    }
+
+    /// A control that appears when the call connects fades in, one after the
+    /// other, once the card has mostly opened. Only a fade: the glass draws
+    /// its own arrival, and a scale on top makes disc and icon drift apart.
+    private func controlTransition(order: Int) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let appear = Animation
+            .easeOut(duration: 0.26)
+            .delay(InCallCard.revealDelay + Double(order) * 0.06)
+        return .asymmetric(
+            insertion: .opacity.animation(appear),
+            removal: .opacity
+        )
+    }
+
+    /// What appears when the call connects waits this long, so it fades in
+    /// on a card that has nearly reached its size rather than on one that is
+    /// still moving.
+    fileprivate static let revealDelay = 0.2
+
+    private var revealTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.96, anchor: .center))
+                .animation(.easeOut(duration: 0.3).delay(InCallCard.revealDelay)),
+            removal: .opacity
+        )
     }
 }
 
@@ -399,11 +466,55 @@ private struct CallVoiceAvatar: View {
         let ring = (level * size * 0.12).rounded()
         ContactFaceAvatar(address: address, size: size)
             .background {
+                // Only the ring's size follows the voice. Animating the whole
+                // circle would also give its position this short animation,
+                // and it would run ahead of the avatar while the card opens.
                 Circle()
                     .fill(CallVoiceTint.remote.opacity(0.16))
-                    .padding(-ring)
-                    .animation(reduceMotion ? nil : .linear(duration: 0.12), value: ring)
+                    .animation(reduceMotion ? nil : .linear(duration: 0.12)) { circle in
+                        circle.scaleEffect(1 + ring * 2 / size)
+                    }
             }
+    }
+}
+
+/// Rings that spread from the avatar while the call is ringing, on either
+/// end. They fade out when it is answered and the voice ring takes over. The
+/// view stays in place either way, so it travels with the avatar.
+private struct CallRingingPulse: View {
+    let tint: Color
+    let isRinging: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private static let period: TimeInterval = 2.0
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                Circle()
+                    .stroke(tint.opacity(0.22), lineWidth: 2)
+                    .padding(-7)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isRinging)) { timeline in
+                    let time = timeline.date.timeIntervalSinceReferenceDate
+                    ZStack {
+                        ring(phase: time / Self.period)
+                        ring(phase: time / Self.period + 0.5)
+                    }
+                }
+            }
+        }
+        .opacity(isRinging ? 1 : 0)
+        .accessibilityHidden(true)
+    }
+
+    /// One ring: it leaves the avatar's edge, grows and fades out.
+    private func ring(phase: Double) -> some View {
+        let progress = phase - phase.rounded(.down)
+        let eased = 1 - pow(1 - progress, 2)
+        return Circle()
+            .stroke(tint.opacity(0.30 * (1 - progress)), lineWidth: 2)
+            .padding(-(2 + 16 * eased))
     }
 }
 
@@ -414,6 +525,9 @@ private struct LiveCallWaveformPanel: View {
     let layout: InCallLayout
     let muted: Bool
     let audioActive: Bool
+    /// False while a connected call is ending or being re-read: the lanes
+    /// stay, but nothing is said about who speaks.
+    let isActive: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -426,14 +540,13 @@ private struct LiveCallWaveformPanel: View {
             paddingTop: layout.panelPaddingTop,
             paddingBottom: layout.panelPaddingBottom,
             muted: muted,
-            hint: layout.keypadOpen
-                ? nil
-                : CallSpeakingHint.text(
-                    speaking: reading.history.speaking,
-                    muted: muted,
-                    audioActive: audioActive
-                )
+            hint: layout.keypadOpen ? nil : hint(for: reading.history.speaking)
         )
+    }
+
+    private func hint(for speaking: CallSpeakingState) -> String {
+        guard isActive else { return "" }
+        return CallSpeakingHint.text(speaking: speaking, muted: muted, audioActive: audioActive)
     }
 }
 

@@ -20,18 +20,19 @@ struct ActiveCallView: View {
     var body: some View {
         GeometryReader { proxy in
             let isActive = appState.call.phase == .active
+            let model = cardModel
             let availableHeight = proxy.size.height - InCallLayout.topMargin - InCallLayout.bottomMargin
             let layout = InCallLayout(
                 availableHeight: availableHeight,
                 keypadOpen: keypadVisible && isActive,
-                hasWaveform: isActive
+                isConnected: model.isConnected
             )
 
             ScrollView(.vertical) {
                 InCallCard(
-                    model: cardModel,
+                    model: model,
                     layout: layout,
-                    width: min(InCallLayout.cardWidth, max(360, proxy.size.width - 28)),
+                    maximumWidth: max(360, proxy.size.width - 28),
                     digits: dtmfDigits,
                     flashedTone: flashedTone,
                     monitor: levels,
@@ -60,7 +61,7 @@ struct ActiveCallView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(callAnimation, value: keypadVisible)
-        .animation(callAnimation, value: appState.call.phase)
+        .animation(phaseAnimation, value: appState.call.phase)
         .onAppear { levels.beginWatching() }
         .onDisappear { levels.endWatching() }
         .onExitCommand {
@@ -232,6 +233,12 @@ struct ActiveCallView: View {
 
     private var callAnimation: Animation {
         reduceMotion ? .linear(duration: 0.14) : .smooth(duration: 0.32)
+    }
+
+    /// For a change of call state, above all the small card opening when the
+    /// call is answered: slower than the keypad, with a little give.
+    private var phaseAnimation: Animation {
+        reduceMotion ? .linear(duration: 0.18) : .spring(response: 0.52, dampingFraction: 0.86)
     }
 }
 

@@ -1014,8 +1014,8 @@ do {
 
     // MARK: In-call layout
 
-    let roomyCall = InCallLayout(availableHeight: 900, keypadOpen: false, hasWaveform: true)
-    let roomyKeypad = InCallLayout(availableHeight: 900, keypadOpen: true, hasWaveform: true)
+    let roomyCall = InCallLayout(availableHeight: 900, keypadOpen: false, isConnected: true)
+    let roomyKeypad = InCallLayout(availableHeight: 900, keypadOpen: true, isConnected: true)
     try expect(
         roomyCall.cardHeight == 680 && roomyKeypad.cardHeight == 680 &&
             roomyCall.avatar == 100 && roomyCall.laneHeight == 62 && !roomyCall.usesMiniHero &&
@@ -1030,8 +1030,8 @@ do {
         "the outer keypad columns are not above the first and last control"
     )
     for height in stride(from: CGFloat(380), through: 900, by: 4) {
-        let closed = InCallLayout(availableHeight: height, keypadOpen: false, hasWaveform: true)
-        let open = InCallLayout(availableHeight: height, keypadOpen: true, hasWaveform: true)
+        let closed = InCallLayout(availableHeight: height, keypadOpen: false, isConnected: true)
+        let open = InCallLayout(availableHeight: height, keypadOpen: true, isConnected: true)
         try expect(
             closed.controlDiameter == open.controlDiameter &&
                 closed.paddingBottom == open.paddingBottom && closed.keySize == open.keySize,
@@ -1050,11 +1050,24 @@ do {
             "the waveform or the sizes are wrong at height \(height)"
         )
     }
-    let ringingCall = InCallLayout(availableHeight: 432, keypadOpen: false, hasWaveform: false)
+    // Until the call connects the card is small, whatever was asked of the keypad.
+    let ringingCall = InCallLayout(availableHeight: 900, keypadOpen: true, isConnected: false)
     try expect(
-        !ringingCall.showsWaveform && !ringingCall.usesMiniHero && ringingCall.cardHeight == 432,
-        "a call that is not connected yet shows a waveform or loses the big avatar"
+        !ringingCall.isConnected && !ringingCall.keypadOpen && !ringingCall.showsWaveform &&
+            !ringingCall.usesMiniHero && ringingCall.avatar == 100 &&
+            ringingCall.cardWidth == 430 && ringingCall.cardHeight == 398 &&
+            roomyCall.cardWidth == 560 && roomyCall.isConnected,
+        "a call that is not connected yet does not get the small card"
     )
+    for height in stride(from: CGFloat(380), through: 900, by: 4) {
+        let ringing = InCallLayout(availableHeight: height, keypadOpen: false, isConnected: false)
+        let connected = InCallLayout(availableHeight: height, keypadOpen: false, isConnected: true)
+        try expect(
+            ringing.cardHeight <= height && ringing.cardHeight < connected.cardHeight &&
+                ringing.controlDiameter == connected.controlDiameter,
+            "the small card does not fit, or the hang-up button resizes on answer, at \(height)"
+        )
+    }
 
     try expect(
         SMSVerificationCodeExtractor.extract(from: "【CellDock】您的验证码为 482913，5 分钟内有效。") == "482913",

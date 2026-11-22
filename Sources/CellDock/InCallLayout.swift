@@ -2,13 +2,17 @@ import CoreGraphics
 
 /// The sizes of the in-call card for the height the window gives it.
 ///
-/// The card keeps one height whether the keypad is open or closed, and the
-/// control row keeps one size, so opening the keypad never moves the buttons
-/// under the pointer. A tall window gets the full-size card; a short one
-/// shrinks the pieces instead of scrolling, and only the smallest windows
-/// give up the waveform while the keypad is open.
+/// Until the call connects the card is small: who is being called and the
+/// button to hang up. Once connected it opens to its full size and keeps one
+/// height whether the keypad is open or closed, and the control row keeps
+/// one size, so opening the keypad never moves the buttons under the
+/// pointer. A tall window gets the full-size card; a short one shrinks the
+/// pieces instead of scrolling, and only the smallest windows give up the
+/// waveform while the keypad is open.
 struct InCallLayout: Equatable {
-    static let cardWidth: CGFloat = 560
+    static let connectedCardWidth: CGFloat = 560
+    /// The card while the call is being set up.
+    static let compactCardWidth: CGFloat = 430
     static let maximumCardHeight: CGFloat = 680
     /// Distance between the centres of two control buttons.
     static let controlPitch: CGFloat = 84
@@ -21,6 +25,9 @@ struct InCallLayout: Equatable {
     static let bottomMargin: CGFloat = 18
 
     let keypadOpen: Bool
+    /// False while the call is being set up: the small card.
+    let isConnected: Bool
+    let cardWidth: CGFloat
     /// The card's height. It is larger than the available height only when
     /// the window is too short even for the smallest sizes; the page scrolls
     /// then.
@@ -63,7 +70,13 @@ struct InCallLayout: Equatable {
         Self.keypadPitch - keySize
     }
 
-    init(availableHeight: CGFloat, keypadOpen: Bool, hasWaveform: Bool) {
+    /// - Parameters:
+    ///   - keypadOpen: ignored until the call is connected.
+    ///   - isConnected: the call has been answered, so there are voices to
+    ///     show and controls to offer.
+    init(availableHeight: CGFloat, keypadOpen requestedKeypad: Bool, isConnected: Bool) {
+        let keypadOpen = requestedKeypad && isConnected
+        let hasWaveform = isConnected
         let height = min(Self.maximumCardHeight, max(0, availableHeight))
         // The control row and the keypad take their size from what the open
         // keypad needs, in both states, so they never resize on a toggle.
@@ -72,6 +85,8 @@ struct InCallLayout: Equatable {
         let scale = Self.fraction(height, from: openSmallest, to: openLargest)
 
         self.keypadOpen = keypadOpen
+        self.isConnected = isConnected
+        cardWidth = isConnected ? Self.connectedCardWidth : Self.compactCardWidth
         paddingTop = Self.paddingTop(scale)
         paddingBottom = Self.paddingBottom(scale)
         controlDiameter = Self.controlDiameter(scale)
@@ -82,6 +97,33 @@ struct InCallLayout: Equatable {
         keysTopGap = Self.keysTopGap(scale)
         miniAvatar = Self.miniAvatar(scale)
         miniHeroTopGap = Self.miniHeroTopGap(scale)
+
+        guard isConnected else {
+            // Setting up: the card hugs the hero and the buttons, with one
+            // comfortable gap between them.
+            let gap = Self.compactGap(scale)
+            let fixed = Self.paddingTop(scale) + Self.paddingBottom(scale) + Self.topRowHeight +
+                gap + Self.controlsHeight(scale)
+            let heroScale = Self.fraction(
+                height - fixed,
+                from: Self.heroHeight(0),
+                to: Self.heroHeight(1)
+            )
+            minimumGapAboveWaveform = (gap / 2).rounded(.down)
+            minimumGapAboveControls = gap - (gap / 2).rounded(.down)
+            usesMiniHero = false
+            showsWaveform = false
+            avatar = Self.avatar(heroScale)
+            heroTopGap = Self.heroTopGap(heroScale)
+            heroNameGap = Self.heroNameGap(heroScale)
+            heroTimerGap = Self.heroTimerGap(heroScale)
+            laneHeight = Self.closedLaneHeight(heroScale)
+            panelPaddingTop = Self.panelPaddingTop(heroScale)
+            panelPaddingBottom = Self.panelPaddingBottom(heroScale)
+            cardHeight = fixed + Self.heroHeight(heroScale)
+            return
+        }
+
         minimumGapAboveWaveform = Self.gapAboveWaveform(scale)
         minimumGapAboveControls = Self.gapAboveControls(scale)
 
@@ -158,6 +200,7 @@ struct InCallLayout: Equatable {
     private static func miniHeroTopGap(_ s: CGFloat) -> CGFloat { mix(10, 14, s) }
     private static func gapAboveWaveform(_ s: CGFloat) -> CGFloat { mix(6, 16, s) }
     private static func gapAboveControls(_ s: CGFloat) -> CGFloat { mix(6, 10, s) }
+    private static func compactGap(_ s: CGFloat) -> CGFloat { mix(20, 36, s) }
     private static func openLaneHeight(_ s: CGFloat) -> CGFloat { mix(16, 24, s) }
     private static func panelPaddingTop(_ s: CGFloat) -> CGFloat { mix(8, 12, s) }
     private static func panelPaddingBottom(_ s: CGFloat) -> CGFloat { mix(8, 10, s) }
