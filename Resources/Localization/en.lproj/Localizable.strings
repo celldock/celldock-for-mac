@@ -197,7 +197,6 @@
 "挂断" = "End Call";
 "蜂窝来电" = "Cellular Call";
 "未知号码" = "Unknown Number";
-"通话按键" = "Keypad";
 "正在录音" = "Recording";
 "停止录音" = "Stop Recording";
 "播放或暂停" = "Play or Pause";
@@ -210,6 +209,15 @@
 "仅保存在这台 Mac" = "Stored Only on This Mac";
 "正在生成声纹…" = "Generating waveform…";
 "对方" = "Other Party";
+"我" = "Me";
+"通话声音" = "Call Audio";
+"正在接通通话声音…" = "Connecting call audio…";
+"你已静音，对方听不到你" = "You’re muted. The other party can’t hear you.";
+"双方同时在说话" = "Both of you are speaking";
+"对方正在说话" = "The other party is speaking";
+"你正在说话" = "You’re speaking";
+"点按键或用键盘输入" = "Click a key or type on the keyboard";
+"已发送的按键 %@" = "Keys sent: %@";
 "本机" = "This Mac";
 
 /* eSIM and tools */
@@ -670,7 +678,6 @@
 "ECM 链路未激活；通话期间不会自动重启模组，请在通话结束后重试。" = "The ECM link is inactive. The module will not restart automatically during a call; try again after the call ends.";
 "GNSS 正在使用 USB NMEA 口，不能启用 interface 1 原始语音。" = "GNSS is using the USB NMEA port and interface 1 raw voice cannot be enabled.";
 "IMS 写入后的回读校验失败，未重启模块。" = "The readback verification after IMS writing failed and the module was not restarted.";
-"Mac 麦克风与扬声器" = "Mac Microphone and Speakers";
 "PID/DCS/时间" = "PID/DCS/Time";
 "QDC507 UAC 启动失败：%@" = "QDC507 UAC startup failed: %@";
 "QDC507 UAC 必须等 active CLCC 后启动；拒绝执行拨号前媒体初始化。" = "QDC507 UAC must wait for active CLCC to start; refusing to perform pre-dial media initialization.";
@@ -1178,7 +1185,6 @@
 "目标模组未能联网，已恢复原上网模组。" = "The target module could not connect. The previous data module was restored.";
 "目标模组的 AT 服务已断开，无法执行自动重启。" = "The target module's AT service disconnected. It cannot be restarted automatically.";
 "目标模组重启后 %lld 秒内未恢复 AT 接口，请拔下后重新插入。" = "The AT interface did not return within %lld seconds after the target module restarted. Unplug it and reconnect it.";
-"直接点击或使用 Mac 键盘" = "Click or use the Mac keyboard";
 "短信 PDU 不是有效的十六进制数据" = "SMS PDU is not valid hexadecimal data";
 "短信 PDU 在 %@ 处不完整" = "SMS PDU is incomplete at %@";
 "短信内容不能为空。" = "The message cannot be empty.";

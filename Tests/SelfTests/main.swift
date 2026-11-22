@@ -923,6 +923,139 @@ do {
         )
     }
 
+    // MARK: In-call waveform
+
+    /// A square wave, whose RMS is its amplitude.
+    func squareWave(amplitude: Int16, frames: Int = 800) -> Data {
+        var data = Data(capacity: frames * 2)
+        for frame in 0 ..< frames {
+            var sample = (frame % 2 == 0 ? amplitude : -amplitude).littleEndian
+            withUnsafeBytes(of: &sample) { data.append(contentsOf: $0) }
+        }
+        return data
+    }
+    var levelAccumulator = CallAudioLevelAccumulator()
+    try expect(levelAccumulator.take() == 0, "a reading without audio is not silent")
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 0))
+    try expect(levelAccumulator.take() == 0, "digital silence did not read as zero")
+    // Ordinary telephone speech is around -26 dBFS: 32768 * 10^(-26/20).
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 1_642))
+    let speechLevel = levelAccumulator.take()
+    try expect(
+        abs(speechLevel - 0.7368) < 0.005 && speechLevel > CallVoiceActivity.startLevel,
+        "ordinary speech did not land in the upper part of the waveform"
+    )
+    try expect(levelAccumulator.take() == 0, "a reading kept the audio of the previous one")
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 40))
+    let noiseLevel = levelAccumulator.take()
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 32_767))
+    let fullLevel = levelAccumulator.take()
+    try expect(
+        noiseLevel == 0 && fullLevel == 1,
+        "line noise is drawn as sound, or loud audio leaves the lane"
+    )
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 1_642, frames: 100))
+    levelAccumulator.add(pcm16LittleEndian: squareWave(amplitude: 1_642, frames: 300) + Data([0x7F]))
+    try expect(
+        levelAccumulator.sampleCount == 400 && abs(levelAccumulator.take() - speechLevel) < 0.001,
+        "audio delivered in pieces, or with a stray byte, changed the level"
+    )
+
+    var voiceActivity = CallVoiceActivity()
+    try expect(
+        !voiceActivity.update(level: 0.2) && voiceActivity.update(level: 0.3),
+        "speech does not start at the start level"
+    )
+    try expect(
+        voiceActivity.update(level: 0.05) && voiceActivity.update(level: 0.05) &&
+            voiceActivity.update(level: 0.2) && voiceActivity.update(level: 0.05) &&
+            voiceActivity.update(level: 0.05) && voiceActivity.update(level: 0.05),
+        "a short gap between words ended the speech"
+    )
+    try expect(
+        !voiceActivity.update(level: 0.05) && !voiceActivity.update(level: 0.2),
+        "speech did not end after a long silence, or restarted below the start level"
+    )
+
+    var waveform = CallWaveformHistory()
+    try expect(
+        waveform.remote.count == CallWaveformHistory.capacity && waveform.speaking == .silent,
+        "a new waveform is not flat"
+    )
+    waveform.push(remote: 0.8, local: 0)
+    try expect(
+        waveform.speaking == .remote && waveform.latestRemote == 0.8 &&
+            waveform.remote.count == CallWaveformHistory.capacity &&
+            waveform.local.count == CallWaveformHistory.capacity,
+        "the other party speaking was not recorded as the newest reading"
+    )
+    waveform.push(remote: 3, local: 0.9)
+    try expect(
+        waveform.speaking == .both && waveform.latestRemote == 1,
+        "both speaking was not detected, or a level left the 0…1 range"
+    )
+    for _ in 0 ..< CallVoiceActivity.hangoverReadings {
+        waveform.push(remote: -1, local: 0.9)
+    }
+    try expect(
+        waveform.speaking == .local && waveform.latestRemote == 0,
+        "the waveform still shows the other party speaking after they stopped"
+    )
+    try expect(
+        CallSpeakingHint.text(speaking: .remote, muted: true, audioActive: true) ==
+            L10n.tr("你已静音，对方听不到你") &&
+            CallSpeakingHint.text(speaking: .both, muted: false, audioActive: true) ==
+            L10n.tr("双方同时在说话") &&
+            CallSpeakingHint.text(speaking: .silent, muted: false, audioActive: true).isEmpty &&
+            CallSpeakingHint.text(speaking: .local, muted: false, audioActive: false) ==
+            L10n.tr("正在接通通话声音…"),
+        "the line under the waveform does not say who is speaking"
+    )
+
+    // MARK: In-call layout
+
+    let roomyCall = InCallLayout(availableHeight: 900, keypadOpen: false, hasWaveform: true)
+    let roomyKeypad = InCallLayout(availableHeight: 900, keypadOpen: true, hasWaveform: true)
+    try expect(
+        roomyCall.cardHeight == 680 && roomyKeypad.cardHeight == 680 &&
+            roomyCall.avatar == 100 && roomyCall.laneHeight == 62 && !roomyCall.usesMiniHero &&
+            roomyKeypad.usesMiniHero && roomyKeypad.miniAvatar == 44 &&
+            roomyKeypad.laneHeight == 24 && roomyKeypad.keySize == 58 &&
+            roomyKeypad.keyRowGap == 16 && roomyKeypad.controlDiameter == 58,
+        "a tall window does not get the full-size call card"
+    )
+    try expect(
+        InCallLayout.keypadPitch * 2 == InCallLayout.controlPitch * 3 &&
+            roomyKeypad.keyColumnGap == 68 && roomyKeypad.controlRowExtent == 310,
+        "the outer keypad columns are not above the first and last control"
+    )
+    for height in stride(from: CGFloat(380), through: 900, by: 4) {
+        let closed = InCallLayout(availableHeight: height, keypadOpen: false, hasWaveform: true)
+        let open = InCallLayout(availableHeight: height, keypadOpen: true, hasWaveform: true)
+        try expect(
+            closed.controlDiameter == open.controlDiameter &&
+                closed.paddingBottom == open.paddingBottom && closed.keySize == open.keySize,
+            "opening the keypad moves or resizes the controls at height \(height)"
+        )
+        // 432 pt is what the smallest window leaves for the card.
+        if height >= 432 {
+            try expect(
+                closed.cardHeight == min(680, height) && open.cardHeight == min(680, height),
+                "the call card does not keep one height at \(height)"
+            )
+        }
+        try expect(
+            closed.showsWaveform && open.showsWaveform == (height >= 484) &&
+                open.keySize >= 44 && closed.avatar >= 64,
+            "the waveform or the sizes are wrong at height \(height)"
+        )
+    }
+    let ringingCall = InCallLayout(availableHeight: 432, keypadOpen: false, hasWaveform: false)
+    try expect(
+        !ringingCall.showsWaveform && !ringingCall.usesMiniHero && ringingCall.cardHeight == 432,
+        "a call that is not connected yet shows a waveform or loses the big avatar"
+    )
+
     try expect(
         SMSVerificationCodeExtractor.extract(from: "【CellDock】您的验证码为 482913，5 分钟内有效。") == "482913",
         "Chinese verification code extraction"

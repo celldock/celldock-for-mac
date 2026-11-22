@@ -187,7 +187,6 @@
 "挂断" = "Raccrocher";
 "蜂窝来电" = "Appel cellulaire";
 "未知号码" = "Numéro inconnu";
-"通话按键" = "Clavier d’appel";
 "正在录音" = "Enregistrement";
 "停止录音" = "Arrêter l’enregistrement";
 "播放或暂停" = "Lire ou mettre en pause";
@@ -197,6 +196,15 @@
 "仅保存在这台 Mac" = "Stocké uniquement sur ce Mac";
 "正在生成声纹…" = "Génération de la forme d’onde…";
 "对方" = "Correspondant";
+"我" = "Moi";
+"通话声音" = "Audio de l’appel";
+"正在接通通话声音…" = "Connexion de l’audio de l’appel…";
+"你已静音，对方听不到你" = "Micro coupé : votre correspondant ne vous entend pas";
+"双方同时在说话" = "Vous parlez tous les deux en même temps";
+"对方正在说话" = "Votre correspondant parle";
+"你正在说话" = "Vous parlez";
+"点按键或用键盘输入" = "Cliquez sur une touche ou utilisez le clavier";
+"已发送的按键 %@" = "Touches envoyées : %@";
 "本机" = "Ce Mac";
 
 /* eSIM and tools */
@@ -649,7 +657,6 @@
 "ECM 链路未激活；通话期间不会自动重启模组，请在通话结束后重试。" = "La liaison ECM est inactive. Le module ne redémarre pas automatiquement pendant un appel ; réessayez après l’appel.";
 "GNSS 正在使用 USB NMEA 口，不能启用 interface 1 原始语音。" = "GNSS utilise le port USB NMEA. Impossible d’activer l’audio brut sur interface 1.";
 "IMS 写入后的回读校验失败，未重启模块。" = "Échec de la relecture après écriture d’IMS. Le module n’a pas redémarré.";
-"Mac 麦克风与扬声器" = "Micro et haut-parleurs du Mac";
 "PID/DCS/时间" = "PID/DCS/heure";
 "QDC507 UAC 启动失败：%@" = "Échec du démarrage UAC du QDC507 : %@";
 "QDC507 UAC 必须等 active CLCC 后启动；拒绝执行拨号前媒体初始化。" = "L’UAC du QDC507 doit démarrer après un CLCC actif. L’initialisation multimédia avant numérotation est refusée.";
@@ -1168,7 +1175,6 @@
 "目标模组未能联网，已恢复原上网模组。" = "Le module cible n’a pas pu se connecter à Internet. Le module d’origine a été rétabli.";
 "目标模组的 AT 服务已断开，无法执行自动重启。" = "Le service AT du module cible est déconnecté. Impossible d’effectuer le redémarrage automatique.";
 "目标模组重启后 %lld 秒内未恢复 AT 接口，请拔下后重新插入。" = "L’interface AT n’a pas été rétablie dans les %lld secondes suivant le redémarrage du module cible. Débranchez puis rebranchez-le.";
-"直接点击或使用 Mac 键盘" = "Cliquez directement ou utilisez le clavier du Mac";
 "短信 PDU 不是有效的十六进制数据" = "Le PDU du SMS n’est pas une donnée hexadécimale valide";
 "短信 PDU 在 %@ 处不完整" = "Le PDU du SMS est incomplet à %@";
 "短信内容不能为空。" = "Le contenu du SMS ne peut pas être vide.";

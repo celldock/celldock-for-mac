@@ -49,6 +49,8 @@ swiftc \
   "$ROOT/Sources/CellDock/MessageConversation.swift" \
   "$ROOT/Sources/CellDock/CommunicationLine.swift" \
   "$ROOT/Sources/CellDock/ContactFace.swift" \
+  "$ROOT/Sources/CellDock/CallAudioLevels.swift" \
+  "$ROOT/Sources/CellDock/InCallLayout.swift" \
   "$ROOT/Sources/CellDock/CellularLinkRecovery.swift" \
   "$ROOT/Sources/CellDock/NetworkHelperInstallPolicy.swift" \
   "$ROOT/Sources/CellDock/CellularModuleModels.swift" \

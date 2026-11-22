@@ -594,6 +594,7 @@ final class VoiceAudioService {
             captureSamples.removeFirst(consumed)
             capturePosition -= Double(consumed)
         }
+        CallAudioLevelMonitor.shared.appendUplink(pcm)
         appendUploadBytes(pcm)
     }
 
@@ -788,6 +789,7 @@ final class VoiceAudioService {
             sessionGeneration == session && running && mediaEnabled
         }
         guard shouldPlay else { return }
+        CallAudioLevelMonitor.shared.appendDownlink(pcm)
         playbackQueue.async { [weak self] in
             guard let self,
                   self.isActiveSession(session),

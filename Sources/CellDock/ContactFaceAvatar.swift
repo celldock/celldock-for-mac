@@ -308,13 +308,18 @@ struct ContactFaceAvatar: View {
 /// A line shown as a small glass capsule: badge plus carrier or line name.
 struct LineChip: View {
     let appearance: LineAppearance
+    /// Added after the name, such as the radio technology during a call.
+    var detail: String? = nil
 
     var body: some View {
         HStack(spacing: 5) {
             if let badgeText = appearance.badgeText {
                 LineBadge(text: badgeText, color: appearance.tint.solid)
             }
-            Text(verbatim: appearance.carrier ?? appearance.title)
+            Text(verbatim: [appearance.carrier ?? appearance.title, detail]
+                .compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · "))
                 .font(.appCaptionStrong)
                 .lineLimit(1)
         }
