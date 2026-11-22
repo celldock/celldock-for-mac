@@ -1072,6 +1072,81 @@ do {
         )
     }
 
+    try expect(
+        CallATParser.hangUpRetryCommand(attempt: 0) == "AT+CHUP" &&
+            CallATParser.hangUpRetryCommand(attempt: 1) == "ATH" &&
+            CallATParser.hangUpRetryCommand(attempt: 2) == "AT+CHUP",
+        "a hang-up that ATH did not end must be retried with AT+CHUP, which +CVHU cannot disable"
+    )
+    try expect(
+        CallEndReason.remoteHangup.localizedDescription(direction: .outgoing, wasConnected: false)
+            == L10n.tr("未接通"),
+        "an outgoing call that never connected was reported as hung up by the other party"
+    )
+    try expect(
+        CallEndReason.remoteHangup.localizedDescription(direction: .outgoing, wasConnected: true)
+            == CallEndReason.remoteHangup.localizedDescription &&
+            CallEndReason.remoteHangup.localizedDescription(direction: .incoming, wasConnected: false)
+            == CallEndReason.remoteHangup.localizedDescription &&
+            CallEndReason.busy.localizedDescription(direction: .outgoing, wasConnected: false)
+            == CallEndReason.busy.localizedDescription,
+        "only an unconnected outgoing remote hang-up may be reworded"
+    )
+    var endedCall = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
+    try expect(endedCall.lastEndDescription == nil, "an idle line with no ended call showed an end reason")
+    endedCall.lastEndReason = .remoteHangup
+    endedCall.lastCallDirection = .outgoing
+    endedCall.lastCallWasConnected = false
+    try expect(
+        endedCall.lastEndDescription == L10n.tr("未接通"),
+        "call snapshot did not describe an unconnected outgoing call"
+    )
+    endedCall.lastCallWasConnected = true
+    try expect(
+        endedCall.lastEndDescription == CallEndReason.remoteHangup.localizedDescription,
+        "call snapshot hid a real remote hang-up"
+    )
+
+    let verificationSuiteName = "CellDockSelfTests.VoiceVerification.\(UUID().uuidString)"
+    guard let verificationDefaults = UserDefaults(suiteName: verificationSuiteName) else {
+        throw SelfTestFailure.failed("could not create an isolated defaults suite")
+    }
+    defer { verificationDefaults.removePersistentDomain(forName: verificationSuiteName) }
+    let verificationStore = VoiceCapabilityVerificationStore(defaults: verificationDefaults)
+    try expect(
+        !verificationStore.isVerified(imei: "860000000000001", backend: .nativeQPCMV),
+        "a module with no connected call was already verified"
+    )
+    verificationStore.markVerified(imei: " 860000000000001 ", backend: .nativeQPCMV)
+    verificationStore.markVerified(imei: "860000000000001", backend: .nativeQPCMV)
+    try expect(
+        verificationStore.isVerified(imei: "860000000000001", backend: .nativeQPCMV),
+        "a connected call did not verify the module's voice backend"
+    )
+    try expect(
+        !verificationStore.isVerified(imei: "860000000000001", backend: .injectedQDC507) &&
+            !verificationStore.isVerified(imei: "860000000000002", backend: .nativeQPCMV),
+        "verification leaked to another backend or another module"
+    )
+    try expect(
+        verificationDefaults.stringArray(forKey: VoiceCapabilityVerificationStore.defaultsKey)?.count == 1,
+        "the same module was recorded twice"
+    )
+    verificationStore.markVerified(imei: nil, backend: .nativeQPCMV)
+    verificationStore.markVerified(imei: "  ", backend: .nativeQPCMV)
+    try expect(
+        !verificationStore.isVerified(imei: nil, backend: .nativeQPCMV) &&
+            verificationDefaults.stringArray(forKey: VoiceCapabilityVerificationStore.defaultsKey)?.count == 1,
+        "a module without a readable IMEI was persisted as verified"
+    )
+    try expect(
+        ModemVoiceCapability.supported(backend: .nativeQPCMV, verified: false).verifiedByCall
+            == .supported(backend: .nativeQPCMV, verified: true) &&
+            ModemVoiceCapability.probing.verifiedByCall == .probing &&
+            ModemVoiceCapability.unsupported(reason: "x").verifiedByCall == .unsupported(reason: "x"),
+        "only a supported backend can become verified by a call"
+    )
+
     let trimmedATCommand = try ATConsoleCommandValidator.validate("  at+csq  ")
     try expect(trimmedATCommand == "at+csq", "AT console trimming")
     for invalidCommand in ["", "CSQ", "AT+CSQ\r\nATD10000;", "AT+中文"] {
@@ -1986,12 +2061,229 @@ do {
         volteModem.voiceServiceAvailability == .available,
         "available VoLTE session was not classified as voice-capable"
     )
+    try expect(registeredModem.dialBlockedBySIMText == nil, "a ready SIM was reported as blocking dialing")
+    for blockedState in [SIMState.absent, .pinRequired, .pukRequired, .queryFailed, .initializing, .unavailable] {
+        var blockedModem = registeredModem
+        blockedModem.simState = blockedState
+        try expect(
+            blockedModem.dialBlockedBySIMText?.isEmpty == false,
+            "a SIM that cannot place calls gave the dialer no reason: \(blockedState)"
+        )
+    }
     var numberlessUnknownModem = registeredModem
     numberlessUnknownModem.simPhoneNumber = nil
     try expect(
         numberlessUnknownModem.voiceServiceAvailability == .unknown,
         "missing phone number incorrectly proved that the SIM was data-only"
     )
+    // What an RM520N-GL on a VoLTE carrier configuration reports while idle:
+    // IMS left to the MBN, VoLTE_cap 0, the IMS bearer up, CS denied.
+    var carrierIMSModem = registeredModem
+    carrierIMSModem.voiceRegistrationState = .denied
+    carrierIMSModem.imsMode = 0
+    carrierIMSModem.volteSessionAvailable = false
+    carrierIMSModem.imsBearerActive = true
+    try expect(
+        carrierIMSModem.voiceServiceAvailability == .volteNotReady,
+        "a running IMS bearer without VoLTE readiness was blamed on the SIM"
+    )
+    try expect(
+        carrierIMSModem.voiceServiceCautionText == L10n.tr("模组未报告 VoLTE 就绪，通话可能无法接通。"),
+        "the dialer did not caution about an unready VoLTE session"
+    )
+    try expect(
+        carrierIMSModem.incomingCallsForcedOn == false && !carrierIMSModem.incomingCallsEffective,
+        "IMS left to the carrier configuration was shown as switched on without voice evidence"
+    )
+    carrierIMSModem.volteCapabilityReportUnreliable = true
+    try expect(
+        carrierIMSModem.voiceServiceAvailability == .available &&
+            carrierIMSModem.voiceServiceCautionText == nil &&
+            carrierIMSModem.incomingCallsEffective,
+        "a module proven to connect calls at VoLTE_cap 0 still warned with its IMS bearer up"
+    )
+    carrierIMSModem.imsBearerActive = false
+    try expect(
+        carrierIMSModem.voiceServiceAvailability == .unknown,
+        "a distrusted VoLTE_cap was used as evidence once the IMS bearer was down"
+    )
+    carrierIMSModem.volteSessionAvailable = true
+    try expect(
+        carrierIMSModem.voiceServiceAvailability == .available,
+        "a reported VoLTE session was ignored on a module whose negatives are distrusted"
+    )
+
+    var imsOffModem = registeredModem
+    imsOffModem.volteSessionAvailable = false
+    imsOffModem.imsMode = 0
+    try expect(
+        imsOffModem.voiceServiceAvailability == .imsDisabled,
+        "IMS that the carrier configuration never brought up was blamed on the SIM"
+    )
+    imsOffModem.imsBearerActive = false
+    try expect(
+        imsOffModem.voiceServiceAvailability == .imsDisabled &&
+            imsOffModem.voiceServiceCautionText == L10n.tr("模组未开启 IMS，请在 SIM 页开启“接收来电”。"),
+        "the dialer did not point at the incoming-call switch while IMS is off"
+    )
+    imsOffModem.imsMode = 2
+    imsOffModem.imsBearerActive = true
+    try expect(
+        imsOffModem.voiceServiceAvailability == .imsDisabled &&
+            imsOffModem.incomingCallsForcedOn == false &&
+            !imsOffModem.incomingCallsEffective,
+        "IMS forced off was shown as able to receive calls"
+    )
+
+    var forcedIMSModem = registeredModem
+    forcedIMSModem.volteSessionAvailable = false
+    forcedIMSModem.imsMode = 1
+    try expect(
+        forcedIMSModem.incomingCallsForcedOn == true && forcedIMSModem.incomingCallsEffective,
+        "IMS forced on was not shown as switched on"
+    )
+    try expect(
+        forcedIMSModem.voiceServiceAvailability == .likelyDataOnly,
+        "forced IMS with no bearer and no VoLTE was not classified as likely data-only"
+    )
+    forcedIMSModem.imsBearerActive = false
+    try expect(
+        forcedIMSModem.voiceServiceAvailability == .likelyDataOnly,
+        "forced IMS whose bearer the network refused was not classified as likely data-only"
+    )
+    forcedIMSModem.imsBearerActive = true
+    try expect(
+        forcedIMSModem.voiceServiceAvailability == .volteNotReady,
+        "forced IMS with a bearer but no VoLTE readiness was blamed on the SIM"
+    )
+    forcedIMSModem.volteSessionAvailable = nil
+    try expect(
+        forcedIMSModem.voiceServiceAvailability == .unknown && forcedIMSModem.voiceServiceCautionText == nil,
+        "an unread or still-settling VoLTE report raised a warning"
+    )
+    var unregisteredModem = forcedIMSModem
+    unregisteredModem.registrationState = .searching
+    unregisteredModem.volteSessionAvailable = false
+    try expect(
+        unregisteredModem.voiceServiceAvailability == .unknown,
+        "a module that is not registered was judged on its voice service"
+    )
+
+    let liveContexts = """
+    +CGDCONT: 1,"IPV4V6","ctnet","0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0",0,0,0,0,,,,,,,,,,"",,,,0\r
+    +CGDCONT: 2,"IPV4V6","IMS","0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0",0,0,0,0,,,,,,,,,,"",,,,0\r
+    +CGDCONT: 3,"IPV4V6","ctwap","0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0",0,0,0,0,,,,,,,,,,"",,,,0\r
+    +CGDCONT: 4,"IPV4V6","sos","0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0",0,0,0,1,,,,,,,,,,"",,,,0\r
+    \r
+    OK\r
+    """
+    try expect(
+        ATResponseParser.parseIMSBearerActive(
+            contexts: liveContexts,
+            activation: "+CGACT: 1,1\r\n+CGACT: 2,1\r\n+CGACT: 3,0\r\n+CGACT: 4,0\r\n\r\nOK\r\n"
+        ) == true,
+        "an active IMS context was not recognized"
+    )
+    try expect(
+        ATResponseParser.parseIMSBearerActive(
+            contexts: liveContexts,
+            activation: "+CGACT: 1,1\r\n+CGACT: 2,0\r\n+CGACT: 3,0\r\n+CGACT: 4,0\r\nOK\r\n"
+        ) == false,
+        "an inactive IMS context was reported as an IMS bearer"
+    )
+    try expect(
+        ATResponseParser.parseIMSBearerActive(
+            contexts: "+CGDCONT: 1,\"IP\",\"internet\",\"0.0.0.0\",0,0\r\nOK",
+            activation: "+CGACT: 1,1\r\nOK"
+        ) == false,
+        "a data context was mistaken for an IMS bearer"
+    )
+    try expect(
+        ATResponseParser.parseIMSBearerActive(contexts: "ERROR", activation: "+CGACT: 1,1\r\nOK") == nil &&
+            ATResponseParser.parseIMSBearerActive(contexts: liveContexts, activation: "+CME ERROR: 100") == nil,
+        "a failed context query was read as no IMS bearer"
+    )
+    for imsName in ["ims", "IMS", "ims.mnc011.mcc460.gprs", "VZWIMS", " ims "] {
+        try expect(ATResponseParser.isIMSAccessPointName(imsName), "IMS APN not recognized: \(imsName)")
+    }
+    for dataName in ["ctnet", "internet", "sos", "", "imsless.example", "3gnet"] {
+        try expect(!ATResponseParser.isIMSAccessPointName(dataName), "data APN treated as IMS: \(dataName)")
+    }
+
+    var volteDebouncer = VoLTEReportDebouncer()
+    let debounceStart = Date(timeIntervalSince1970: 1_000_000)
+    try expect(
+        volteDebouncer.publishable(false, now: debounceStart) == nil &&
+            volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(10)) == nil,
+        "VoLTE was reported unavailable before IMS had time to register"
+    )
+    try expect(
+        volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(20)) == false,
+        "a VoLTE report that stayed negative was never published"
+    )
+    try expect(
+        volteDebouncer.publishable(true, now: debounceStart.addingTimeInterval(21)) == true &&
+            volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(22)) == nil,
+        "a positive VoLTE report did not restart the settle window"
+    )
+    try expect(
+        volteDebouncer.publishable(nil, now: debounceStart.addingTimeInterval(23)) == nil &&
+            volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(60)) == nil,
+        "an unreadable VoLTE report did not restart the settle window"
+    )
+    volteDebouncer.reset()
+    try expect(
+        volteDebouncer.publishable(false, now: debounceStart.addingTimeInterval(100)) == nil,
+        "a reset debouncer kept its earlier negative reading"
+    )
+
+    try expect(
+        VoLTEReportCalibrationPolicy.callDisprovesReport(
+            reportedVoLTEAvailable: false,
+            packet: .registered,
+            voice: .denied
+        ),
+        "a call connected over LTE at VoLTE_cap 0 did not disprove the report"
+    )
+    try expect(
+        !VoLTEReportCalibrationPolicy.callDisprovesReport(
+            reportedVoLTEAvailable: true,
+            packet: .registered,
+            voice: .denied
+        ) &&
+            !VoLTEReportCalibrationPolicy.callDisprovesReport(
+                reportedVoLTEAvailable: nil,
+                packet: .registered,
+                voice: .denied
+            ) &&
+            !VoLTEReportCalibrationPolicy.callDisprovesReport(
+                reportedVoLTEAvailable: false,
+                packet: .registered,
+                voice: .registered
+            ) &&
+            !VoLTEReportCalibrationPolicy.callDisprovesReport(
+                reportedVoLTEAvailable: false,
+                packet: .notRegistered,
+                voice: .denied
+            ),
+        "a call that could have used circuit-switched voice, or had no negative report, disproved VoLTE_cap"
+    )
+    let calibrationSuiteName = "CellDockSelfTests.VoLTECalibration.\(UUID().uuidString)"
+    guard let calibrationDefaults = UserDefaults(suiteName: calibrationSuiteName) else {
+        throw SelfTestFailure.failed("could not create an isolated defaults suite")
+    }
+    defer { calibrationDefaults.removePersistentDomain(forName: calibrationSuiteName) }
+    let calibrationStore = VoiceCapabilityVerificationStore(defaults: calibrationDefaults)
+    calibrationStore.markVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW1")
+    try expect(
+        calibrationStore.isVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW1") &&
+            !calibrationStore.isVoLTEReportUnreliable(imei: "860000000000001", firmwareVersion: "FW2") &&
+            !calibrationStore.isVoLTEReportUnreliable(imei: "860000000000002", firmwareVersion: "FW1") &&
+            !calibrationStore.isVoLTEReportUnreliable(imei: nil, firmwareVersion: "FW1") &&
+            !calibrationStore.isVerified(imei: "860000000000001", backend: .nativeQPCMV),
+        "VoLTE report calibration leaked across firmware, modules or the voice backend record"
+    )
+
     let activeECMNetwork = CellularNetworkStatus(
         isEnabled: true,
         isActive: true,

@@ -1252,7 +1252,6 @@
 "请保持模块连接，检测完成后会自动显示下一步。" = "Laissez le module connecté. L’étape suivante s’affichera automatiquement après la détection.";
 "请先使用运营商提供的 PIN 解锁" = "Déverrouillez d’abord la SIM avec le code PIN fourni par l’opérateur";
 "请先插入 DJI 4G 模块。" = "Insérez d’abord le module DJI 4G.";
-"请先插入 QDC507 模块。" = "Insérez d’abord le module QDC507.";
 "请在 %@ 前完成续费" = "Renouvelez avant le %@";
 "请插入蜂窝模块" = "Insérez un module cellulaire";
 "请检查 SIM 卡是否正确插入" = "Vérifiez que la carte SIM est correctement insérée";
@@ -1361,6 +1360,13 @@
 "可能仅数据" = "Données uniquement probable";
 "语音能力未知" = "Capacité vocale inconnue";
 "该 SIM 可能仅支持数据，未检测到可用语音服务。" = "Cette SIM est peut-être réservée aux données ; aucun service vocal disponible n’a été détecté.";
+"模组未开启 IMS，请在 SIM 页开启“接收来电”。" = "IMS est désactivé sur ce module. Activez « Recevoir les appels » dans la page SIM.";
+"模组未报告 VoLTE 就绪，通话可能无法接通。" = "Le module ne signale pas que la VoLTE est prête ; les appels risquent de ne pas aboutir.";
+"未开启 IMS" = "IMS désactivé";
+"VoLTE 未就绪" = "VoLTE non prête";
+"IMS 由运营商配置启用，模块可以接收来电" = "IMS est activé par la configuration de l’opérateur ; le module peut recevoir les appels";
+"IMS 由运营商配置决定，模块未报告 VoLTE 就绪；开启后将强制启用 IMS" = "IMS suit la configuration de l’opérateur et le module ne signale pas que la VoLTE est prête ; l’activation force IMS";
+"IMS 由运营商配置决定" = "IMS suit la configuration de l’opérateur";
 "完全关闭" = "Désactiver complètement";
 "保持连接" = "Rester connecté";
 "蜂窝优先" = "Priorité au cellulaire";

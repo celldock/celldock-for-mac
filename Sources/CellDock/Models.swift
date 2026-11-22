@@ -55,6 +55,11 @@ enum CellularRegistrationState: Equatable {
 enum VoiceServiceAvailability: Equatable {
     case unavailable
     case available
+    /// The module's IMS is switched off or was never brought up, so there is
+    /// no VoLTE to place a call over. The SIM is not the problem.
+    case imsDisabled
+    /// IMS is running but the module does not report VoLTE as ready.
+    case volteNotReady
     case likelyDataOnly
     case unknown
 }
@@ -97,6 +102,127 @@ enum ModemVoiceCapability: Equatable {
     case unsupported(reason: String)
     case probeFailed(reason: String)
     case initializationFailed(reason: String)
+
+    /// The same capability once a call has connected over it. Anything other
+    /// than an unverified `.supported` is returned unchanged.
+    var verifiedByCall: ModemVoiceCapability {
+        guard case let .supported(backend, _) = self else { return self }
+        return .supported(backend: backend, verified: true)
+    }
+}
+
+/// Remembers which modules have carried a connected call, so "verified by a
+/// call" survives a reconnect and an app restart instead of resetting every
+/// time the module is initialized.
+///
+/// Keyed by IMEI and voice backend: a different module, or the same module
+/// after a change that switches its backend, has to prove itself again.
+struct VoiceCapabilityVerificationStore {
+    static let defaultsKey = "VoiceCapabilityVerifiedModules.v1"
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    static func key(imei: String?, backend: ModemVoiceBackend) -> String? {
+        guard let imei = imei?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !imei.isEmpty else {
+            return nil
+        }
+        switch backend {
+        case .nativeQPCMV: return "\(imei)|qpcmv"
+        case .injectedQDC507: return "\(imei)|qdc507"
+        }
+    }
+
+    func isVerified(imei: String?, backend: ModemVoiceBackend) -> Bool {
+        guard let key = Self.key(imei: imei, backend: backend) else { return false }
+        return (defaults.stringArray(forKey: Self.defaultsKey) ?? []).contains(key)
+    }
+
+    func markVerified(imei: String?, backend: ModemVoiceBackend) {
+        guard let key = Self.key(imei: imei, backend: backend) else { return }
+        insert(key, into: Self.defaultsKey)
+    }
+
+    // MARK: VoLTE_cap reliability
+
+    /// Firmware whose AT+QCFG="ims" VoLTE_cap stayed 0 while a call connected
+    /// over LTE. Keyed by IMEI and firmware: an update may fix the report.
+    static let unreliableVoLTEReportDefaultsKey = "VoLTECapabilityReportUnreliableModules.v1"
+
+    static func voLTEReportKey(imei: String?, firmwareVersion: String?) -> String? {
+        guard let imei = imei?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !imei.isEmpty else {
+            return nil
+        }
+        let firmware = firmwareVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return "\(imei)|\(firmware)"
+    }
+
+    func isVoLTEReportUnreliable(imei: String?, firmwareVersion: String?) -> Bool {
+        guard let key = Self.voLTEReportKey(imei: imei, firmwareVersion: firmwareVersion) else {
+            return false
+        }
+        return (defaults.stringArray(forKey: Self.unreliableVoLTEReportDefaultsKey) ?? []).contains(key)
+    }
+
+    func markVoLTEReportUnreliable(imei: String?, firmwareVersion: String?) {
+        guard let key = Self.voLTEReportKey(imei: imei, firmwareVersion: firmwareVersion) else { return }
+        insert(key, into: Self.unreliableVoLTEReportDefaultsKey)
+    }
+
+    private func insert(_ key: String, into defaultsKey: String) {
+        var keys = defaults.stringArray(forKey: defaultsKey) ?? []
+        guard !keys.contains(key) else { return }
+        keys.append(key)
+        defaults.set(keys, forKey: defaultsKey)
+    }
+}
+
+/// When a connected call proves that VoLTE_cap 0 was wrong.
+enum VoLTEReportCalibrationPolicy {
+    /// A call is active on a packet-registered module with no circuit-switched
+    /// registration to fall back to, so it can only be running over IMS. If
+    /// the module said VoLTE was unavailable right before it, that report is
+    /// not a usable negative on this firmware.
+    static func callDisprovesReport(
+        reportedVoLTEAvailable: Bool?,
+        packet: CellularRegistrationState,
+        voice: CellularRegistrationState
+    ) -> Bool {
+        reportedVoLTEAvailable == false && packet.hasService && !voice.hasService
+    }
+}
+
+/// Holds back "VoLTE is not available" until the module has kept saying so
+/// for a while. IMS registers a few seconds after the packet
+/// domain does, so the first reads after a start, a SIM change or a slot
+/// switch are 0 on every healthy line and must not raise a warning.
+struct VoLTEReportDebouncer: Equatable {
+    /// Two regular radio refreshes after the first negative reading.
+    static let settleInterval: TimeInterval = 20
+
+    private(set) var firstNegativeAt: Date?
+
+    mutating func reset() {
+        firstNegativeAt = nil
+    }
+
+    /// Feeds one AT+QCFG="ims" reading; returns what may be published.
+    mutating func publishable(_ reported: Bool?, now: Date) -> Bool? {
+        guard reported == false else {
+            firstNegativeAt = nil
+            return reported
+        }
+        guard let firstNegativeAt else {
+            self.firstNegativeAt = now
+            return nil
+        }
+        return now.timeIntervalSince(firstNegativeAt) >= Self.settleInterval ? false : nil
+    }
 }
 
 enum CellularDataConnectionState: Equatable {
@@ -380,6 +506,12 @@ struct ModemSnapshot: Equatable {
     /// Quectel AT+QCFG="ims" VoLTE_cap. A value of 1 means a VoLTE
     /// session is available, not merely that IMS was enabled in settings.
     var volteSessionAvailable: Bool?
+    /// Whether an IMS PDN is up (the IMS APN context is active). It shows
+    /// that IMS is running, not that IMS registration succeeded.
+    var imsBearerActive: Bool?
+    /// This module has connected a call over LTE while reporting VoLTE_cap 0,
+    /// so on it that field cannot be read as "no voice service".
+    var volteCapabilityReportUnreliable = false
     var usbConfiguration: ModemUSBConfiguration?
     var endpointDescription: String?
     var lastError: String?
@@ -407,6 +539,19 @@ struct ModemSnapshot: Equatable {
         simState == .ready
     }
 
+    /// Why this SIM cannot place a call right now, or nil when it is ready.
+    /// Shared by every dialer so they cannot disagree about the SIM.
+    var dialBlockedBySIMText: String? {
+        switch simState {
+        case .ready: return nil
+        case .pinRequired: return L10n.tr("需要 SIM PIN 后才能拨号")
+        case .pukRequired: return L10n.tr("需要 SIM PUK 后才能拨号")
+        case .absent: return L10n.tr("插入 SIM 卡后才能拨号")
+        case .queryFailed: return L10n.tr("确认 SIM 状态后才能拨号")
+        case .unavailable, .initializing: return L10n.tr("正在等待 SIM 卡就绪")
+        }
+    }
+
     var voiceServiceAvailability: VoiceServiceAvailability {
         guard simReady else { return .unavailable }
         if volteSessionAvailable == true {
@@ -417,11 +562,60 @@ struct ModemSnapshot: Equatable {
         // subscription authorizes voice calls. Some LTE modules also report
         // CREG registered/roaming for data-only SIMs. Missing CNUM/MSISDN is
         // likewise only supporting information and is intentionally ignored.
-        if registrationState.hasService,
-           volteSessionAvailable == false {
-            return .likelyDataOnly
+        guard registrationState.hasService else { return .unknown }
+
+        if volteCapabilityReportUnreliable {
+            // A call has connected on this module while it reported
+            // VoLTE_cap 0, so 0 says nothing here. The IMS bearer is what was
+            // up when that call worked.
+            return imsBearerActive == true ? .available : .unknown
         }
-        return .unknown
+        guard volteSessionAvailable == false else { return .unknown }
+
+        // VoLTE is not ready. Say why, as far as the module lets us tell: a
+        // SIM is only suspected once IMS is known to be switched on and still
+        // has no bearer.
+        switch imsMode {
+        case 2:
+            return .imsDisabled
+        case 0:
+            // IMS follows the carrier configuration (MBN). A bearer means the
+            // MBN enabled it; without one it was never brought up.
+            return imsBearerActive == true ? .volteNotReady : .imsDisabled
+        default:
+            return imsBearerActive == true ? .volteNotReady : .likelyDataOnly
+        }
+    }
+
+    /// One line for a dialer when a call is unlikely to connect, nil when
+    /// there is nothing to warn about. Shared so every dialer says the same.
+    var voiceServiceCautionText: String? {
+        switch voiceServiceAvailability {
+        case .likelyDataOnly:
+            return L10n.tr("该 SIM 可能仅支持数据，未检测到可用语音服务。")
+        case .imsDisabled:
+            return L10n.tr("模组未开启 IMS，请在 SIM 页开启“接收来电”。")
+        case .volteNotReady:
+            return L10n.tr("模组未报告 VoLTE 就绪，通话可能无法接通。")
+        case .available, .unknown, .unavailable:
+            return nil
+        }
+    }
+
+    /// AT+QCFG="ims" 1 forces IMS on. 0 leaves it to the carrier
+    /// configuration and 2 forces it off, so neither is "switched on".
+    var incomingCallsForcedOn: Bool? {
+        imsMode.map { $0 == 1 }
+    }
+
+    /// Whether carrier calls can reach the module as far as it reports: IMS
+    /// forced on, or left to the carrier configuration with voice available.
+    var incomingCallsEffective: Bool {
+        switch imsMode {
+        case 1: return true
+        case 0: return voiceServiceAvailability == .available
+        default: return false
+        }
     }
 
     var operationalState: ModemOperationalState {

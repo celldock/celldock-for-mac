@@ -98,6 +98,54 @@ enum ATResponseParser {
         return capability == 1
     }
 
+    /// Whether an IMS PDN is up: a context whose APN is the IMS APN in
+    /// AT+CGDCONT? that AT+CGACT? reports as active.
+    ///
+    /// Returns nil when either response could not be read, so a failed query
+    /// is never mistaken for "no IMS bearer". An active IMS bearer shows that
+    /// the module's IMS stack is running and the network accepted its APN; it
+    /// is not by itself proof that IMS registration succeeded.
+    static func parseIMSBearerActive(contexts: String, activation: String) -> Bool? {
+        var imsContextIDs = Set<Int>()
+        var sawContext = false
+        for line in normalizedLines(contexts) where line.uppercased().hasPrefix("+CGDCONT:") {
+            let fields = splitCSV(String(line.dropFirst("+CGDCONT:".count)))
+            guard fields.count >= 3, let contextID = Int(fields[0]) else { continue }
+            sawContext = true
+            if isIMSAccessPointName(unquote(fields[2])) {
+                imsContextIDs.insert(contextID)
+            }
+        }
+        var activeContextIDs = Set<Int>()
+        var sawActivation = false
+        for line in normalizedLines(activation) where line.uppercased().hasPrefix("+CGACT:") {
+            let fields = splitCSV(String(line.dropFirst("+CGACT:".count)))
+            guard fields.count >= 2,
+                  let contextID = Int(fields[0]),
+                  let state = Int(fields[1]) else {
+                continue
+            }
+            sawActivation = true
+            if state == 1 {
+                activeContextIDs.insert(contextID)
+            }
+        }
+        guard sawContext, sawActivation else { return nil }
+        return !imsContextIDs.isDisjoint(with: activeContextIDs)
+    }
+
+    /// "ims", "IMS", "ims.mnc011.mcc460.gprs" and carrier-prefixed names such
+    /// as "vzwims". Only the network identifier, the first label, is compared.
+    static func isIMSAccessPointName(_ accessPointName: String) -> Bool {
+        let label = accessPointName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(separator: ".")
+            .first
+            .map(String.init) ?? ""
+        return label.hasSuffix("ims")
+    }
+
     static func parseVoLTEDisabled(_ response: String) -> Bool? {
         guard let line = normalizedLines(response).first(where: {
             let normalized = $0.lowercased().replacingOccurrences(of: "_", with: "/")

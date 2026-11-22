@@ -227,7 +227,7 @@ struct SIMManagementView: View {
                                 module: module,
                                 hidesSensitiveIdentifiers: appState.isPresentationPrivacyEnabled,
                                 showsCurrentInternetTag: module.isPrimaryData,
-                                showsIncomingCallsTag: module.modem.imsMode.map { $0 != 0 } ?? false,
+                                showsIncomingCallsTag: module.modem.incomingCallsEffective,
                                 showsESIMTag: module.cardKind == .eUICC
                             )
                             .communicationSelectionHighlight(selectedModuleID == module.id)
@@ -1376,7 +1376,7 @@ struct SIMManagementView: View {
         Binding(
             get: {
                 pendingIncomingCallsEnabled ??
-                    selectedModem.imsMode.map { $0 != 0 } ?? false
+                    selectedModem.incomingCallsForcedOn ?? false
             },
             set: { pendingIncomingCallsEnabled = $0 }
         )
@@ -1395,7 +1395,25 @@ struct SIMManagementView: View {
         guard !appState.moduleHasCall(selectedModuleID) else { return L10n.tr("通话期间不可更改") }
         guard !selectedEUICC.isBusy else { return L10n.tr("eSIM 操作期间不可更改") }
         guard let mode = selectedModem.imsMode else { return L10n.tr("正在读取模块 IMS 状态") }
-        return mode == 0 ? L10n.tr("模块不会接收运营商来电") : L10n.tr("允许模块接收运营商来电")
+        switch mode {
+        case 1:
+            return L10n.tr("允许模块接收运营商来电")
+        case 0:
+            // IMS=0 leaves IMS to the carrier configuration (MBN); whether
+            // calls arrive depends on what that configuration enabled.
+            switch selectedModem.voiceServiceAvailability {
+            case .available:
+                return L10n.tr("IMS 由运营商配置启用，模块可以接收来电")
+            case .volteNotReady:
+                return L10n.tr("IMS 由运营商配置决定，模块未报告 VoLTE 就绪；开启后将强制启用 IMS")
+            case .imsDisabled, .likelyDataOnly:
+                return L10n.tr("模块不会接收运营商来电")
+            case .unknown, .unavailable:
+                return L10n.tr("IMS 由运营商配置决定")
+            }
+        default:
+            return L10n.tr("模块不会接收运营商来电")
+        }
     }
 
     private var incomingCallStateText: String {
@@ -1408,8 +1426,8 @@ struct SIMManagementView: View {
     private var incomingCallStateColor: Color {
         if appState.isChangingIncomingCallSetting { return .blue }
         guard selectedModem.isConnected else { return .secondary }
-        guard let mode = selectedModem.imsMode else { return .blue }
-        return mode == 0 ? .secondary : .green
+        guard selectedModem.imsMode != nil else { return .blue }
+        return selectedModem.incomingCallsEffective ? .green : .secondary
     }
 
     private var incomingCallsHelpText: String {
@@ -1919,6 +1937,8 @@ struct SIMManagementView: View {
         switch selectedModem.voiceServiceAvailability {
         case .unavailable: return L10n.tr("不可用")
         case .available: return L10n.tr("可用")
+        case .imsDisabled: return L10n.tr("未开启 IMS")
+        case .volteNotReady: return L10n.tr("VoLTE 未就绪")
         case .likelyDataOnly: return L10n.tr("可能仅数据")
         case .unknown: return L10n.tr("语音能力未知")
         }
@@ -1927,7 +1947,7 @@ struct SIMManagementView: View {
     private var voiceServiceColor: Color {
         switch selectedModem.voiceServiceAvailability {
         case .available: return .green
-        case .likelyDataOnly: return .orange
+        case .imsDisabled, .volteNotReady, .likelyDataOnly: return .orange
         case .unavailable, .unknown: return .secondary
         }
     }

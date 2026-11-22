@@ -1261,7 +1261,6 @@
 "请保持模块连接，检测完成后会自动显示下一步。" = "Keep the module connected. The next step appears automatically when detection finishes.";
 "请先使用运营商提供的 PIN 解锁" = "Use the PIN provided by your carrier to unlock first";
 "请先插入 DJI 4G 模块。" = "Please insert the DJI 4G module first.";
-"请先插入 QDC507 模块。" = "Please insert the QDC507 module first.";
 "请在 %@ 前完成续费" = "Renew by %@";
 "请插入蜂窝模块" = "Insert a Cellular Module";
 "请检查 SIM 卡是否正确插入" = "Check that the SIM card is inserted correctly";
@@ -1365,6 +1364,13 @@
 "可能仅数据" = "Likely Data Only";
 "语音能力未知" = "Voice Capability Unknown";
 "该 SIM 可能仅支持数据，未检测到可用语音服务。" = "This SIM may be data-only; no available voice service was detected.";
+"模组未开启 IMS，请在 SIM 页开启“接收来电”。" = "IMS is off on this module. Turn on “Receive Calls” on the SIM page.";
+"模组未报告 VoLTE 就绪，通话可能无法接通。" = "The module does not report VoLTE as ready; calls may not connect.";
+"未开启 IMS" = "IMS Off";
+"VoLTE 未就绪" = "VoLTE Not Ready";
+"IMS 由运营商配置启用，模块可以接收来电" = "IMS is enabled by the carrier configuration; the module can receive calls";
+"IMS 由运营商配置决定，模块未报告 VoLTE 就绪；开启后将强制启用 IMS" = "IMS follows the carrier configuration and the module does not report VoLTE as ready; turning this on forces IMS on";
+"IMS 由运营商配置决定" = "IMS follows the carrier configuration";
 "完全关闭" = "Turn Off Completely";
 "保持连接" = "Stay Connected";
 "蜂窝优先" = "Prefer Cellular";

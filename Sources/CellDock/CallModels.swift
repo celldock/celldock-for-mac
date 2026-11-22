@@ -37,6 +37,17 @@ enum CallEndReason: String, Codable, Equatable {
         case .failed: return L10n.tr("通话失败")
         }
     }
+
+    /// NO CARRIER and an emptied CLCC are all a modem reports when the far
+    /// side or the network ends a call, so `.remoteHangup` also covers an
+    /// outgoing call that never connected. Nobody hung up on a call that was
+    /// never answered; say that it did not connect instead.
+    func localizedDescription(direction: CallDirection?, wasConnected: Bool) -> String {
+        if self == .remoteHangup, direction == .outgoing, !wasConnected {
+            return L10n.tr("未接通")
+        }
+        return localizedDescription
+    }
 }
 
 struct UACMediaSnapshot: Equatable {
@@ -58,6 +69,9 @@ struct CallSnapshot: Equatable {
     var muted = false
     var startedAt: Date?
     var lastEndReason: CallEndReason?
+    /// Direction and outcome of the call `lastEndReason` describes.
+    var lastCallDirection: CallDirection?
+    var lastCallWasConnected = false
     var lastError: String?
     var controlInterfaceBusy = false
     var mediaCleanupPending = false
@@ -78,6 +92,14 @@ struct CallSnapshot: Equatable {
 
     var canSendDTMF: Bool {
         phase == .active
+    }
+
+    /// How the last call ended, worded for the call it actually was.
+    var lastEndDescription: String? {
+        lastEndReason?.localizedDescription(
+            direction: lastCallDirection,
+            wasConnected: lastCallWasConnected
+        )
     }
 }
 

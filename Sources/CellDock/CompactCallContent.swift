@@ -150,8 +150,8 @@ struct CompactCallContent: View {
                 Spacer()
             }
 
-            if let reason = appState.call.lastEndReason {
-                Text(verbatim: reason.localizedDescription)
+            if let endDescription = appState.call.lastEndDescription {
+                Text(verbatim: endDescription)
                     .font(.appCaption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -403,17 +403,8 @@ struct CompactCallContent: View {
 
     private var callAvailabilityDetail: String {
         let modem = appState.currentCommunicationModemSnapshot
-        switch modem.simState {
-        case .ready:
-            return modem.voiceServiceAvailability == .likelyDataOnly
-                ? L10n.tr("该 SIM 可能仅支持数据，未检测到可用语音服务。")
-                : L10n.tr("通过当前 SIM 卡呼叫")
-        case .pinRequired: return L10n.tr("需要 SIM PIN 后才能拨号")
-        case .pukRequired: return L10n.tr("需要 SIM PUK 后才能拨号")
-        case .absent: return L10n.tr("插入 SIM 卡后才能拨号")
-        case .queryFailed: return L10n.tr("确认 SIM 状态后才能拨号")
-        case .unavailable, .initializing: return L10n.tr("正在等待 SIM 卡就绪")
-        }
+        if let simBlocker = modem.dialBlockedBySIMText { return simBlocker }
+        return modem.voiceServiceCautionText ?? L10n.tr("通过当前 SIM 卡呼叫")
     }
 
     private var matchedContact: String? {
