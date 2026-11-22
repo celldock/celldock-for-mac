@@ -1092,6 +1092,16 @@ do {
             == CallEndReason.busy.localizedDescription,
         "only an unconnected outgoing remote hang-up may be reworded"
     )
+    try expect(
+        CallEndReason.dialRefusedDescription(voiceServiceCaution: nil) == L10n.tr("未接通") &&
+            CallEndReason.dialRefusedDescription(voiceServiceCaution: "") == L10n.tr("未接通"),
+        "a dial the network refused was not reported as not connected"
+    )
+    try expect(
+        CallEndReason.dialRefusedDescription(voiceServiceCaution: "caution")
+            == "\(L10n.tr("未接通"))\ncaution",
+        "a refused dial did not carry the known voice-service caution"
+    )
     var endedCall = CallSnapshot(phase: .idle, voiceOverUSBSupported: true)
     try expect(endedCall.lastEndDescription == nil, "an idle line with no ended call showed an end reason")
     endedCall.lastEndReason = .remoteHangup

@@ -38,6 +38,15 @@ enum CallEndReason: String, Codable, Equatable {
         }
     }
 
+    /// What to say when ATD itself answers NO CARRIER. The network never set
+    /// the call up, so nobody hung up; when the line is known to have no
+    /// ready voice service, that is the likely reason and is said as well.
+    static func dialRefusedDescription(voiceServiceCaution: String?) -> String {
+        let notConnected = L10n.tr("未接通")
+        guard let voiceServiceCaution, !voiceServiceCaution.isEmpty else { return notConnected }
+        return "\(notConnected)\n\(voiceServiceCaution)"
+    }
+
     /// NO CARRIER and an emptied CLCC are all a modem reports when the far
     /// side or the network ends a call, so `.remoteHangup` also covers an
     /// outgoing call that never connected. Nobody hung up on a call that was

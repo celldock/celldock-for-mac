@@ -1737,7 +1737,7 @@ final class ModemService {
                     return
                 }
                 self.failCallSetup(
-                    .failure(dial.error ?? self.callFailureMessage(from: dial.output)),
+                    .failure(self.dialFailureMessage(dial)),
                     completion: completion
                 )
                 return
@@ -1858,7 +1858,7 @@ final class ModemService {
                     }
                     self.cancelPendingQDCMediaSession()
                     self.failCallSetup(
-                        .failure(dial.error ?? self.callFailureMessage(from: dial.output)),
+                        .failure(self.dialFailureMessage(dial)),
                         completion: completion
                     )
                     return
@@ -2585,6 +2585,17 @@ final class ModemService {
             lastEndReason: hadCall || disconnected ? .deviceDisconnected : nil
         )
         publishCallSnapshot()
+    }
+
+    /// ATD ended with a final result other than OK. NO CARRIER there means
+    /// the network refused or dropped the setup, not that anyone hung up.
+    private func dialFailureMessage(_ dial: CommandResult) -> String {
+        if dial.output.uppercased().contains("NO CARRIER") {
+            return CallEndReason.dialRefusedDescription(
+                voiceServiceCaution: snapshot.voiceServiceCautionText
+            )
+        }
+        return dial.error ?? callFailureMessage(from: dial.output)
     }
 
     private func callFailureMessage(from output: String) -> String {
