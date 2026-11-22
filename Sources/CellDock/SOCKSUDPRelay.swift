@@ -19,6 +19,12 @@ enum SOCKSUDPRelayError: Error {
 /// selected egress interface, while the client datagrams arrive over ECM/LAN.
 final class SOCKSUDPRelay {
     var onFailure: ((Error) -> Void)?
+    /// Payload bytes delivered to the client and to destinations. Called on
+    /// the relay's queue.
+    var onTraffic: ((_ downloaded: Int, _ uploaded: Int) -> Void)?
+    /// The destination of the latest client datagram, with the address it was
+    /// sent to when that is known. Called on the relay's queue.
+    var onDestination: ((_ address: SOCKSAddress, _ port: UInt16, _ resolved: SOCKSAddress?) -> Void)?
 
     private struct Destination: Hashable {
         let address: SOCKSAddress
@@ -153,6 +159,8 @@ final class SOCKSUDPRelay {
     func stop() {
         guard !stopped else { return }
         stopped = true
+        onTraffic = nil
+        onDestination = nil
         listener?.cancel()
         listener = nil
         client?.cancel()
@@ -209,6 +217,8 @@ final class SOCKSUDPRelay {
         let datagram = try SOCKSProtocol.decodeUDPDatagram(content)
         if let upstreamAssociation {
             try upstreamAssociation.send(content)
+            onDestination?(datagram.address, datagram.port, nil)
+            onTraffic?(0, datagram.payload.count)
             return
         }
         let destinations = try resolvedDestinations(for: datagram.address, port: datagram.port)
@@ -220,6 +230,8 @@ final class SOCKSUDPRelay {
                 guard written == datagram.payload.count else {
                     throw BoundSocketError.systemCall(operation: "send UDP", code: EWOULDBLOCK)
                 }
+                onDestination?(datagram.address, datagram.port, destination.address)
+                onTraffic?(0, written)
                 return
             } catch {
                 lastError = error
@@ -230,6 +242,9 @@ final class SOCKSUDPRelay {
 
     private func forwardToClient(_ content: Data) {
         guard let client, !stopped else { return }
+        // Count the payload only, as for direct destinations.
+        let payloadCount = (try? SOCKSProtocol.decodeUDPDatagram(content).payload.count) ?? content.count
+        onTraffic?(payloadCount, 0)
         client.send(
             content: content,
             contentContext: .defaultMessage,
@@ -297,6 +312,7 @@ final class SOCKSUDPRelay {
                 switch try upstream.socket.read(maximumBytes: 65_507) {
                 case let .data(payload):
                     upstream.lastUsed = DispatchTime.now()
+                    onTraffic?(payload.count, 0)
                     let wire = try SOCKSProtocol.encodeUDPDatagram(SOCKSUDPDatagram(
                         address: upstream.destination.address,
                         port: upstream.destination.port,

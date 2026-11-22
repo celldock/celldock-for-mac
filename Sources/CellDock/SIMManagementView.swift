@@ -375,6 +375,7 @@ struct SIMManagementView: View {
         }
         .frame(width: 330)
         .fixedSize(horizontal: false, vertical: true)
+        .sampleModuleThroughput(appState.moduleThroughputMonitor)
     }
 
     private func internetModuleRow(_ module: CellularModuleSummary) -> some View {
@@ -397,9 +398,18 @@ struct SIMManagementView: View {
                         .foregroundStyle(.orange)
                         .help(issue.localizedDetail)
                 } else {
-                    Text(verbatim: internetModuleDetail(module))
-                        .font(.appCaption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 0) {
+                        Text(verbatim: internetModuleDetail(module))
+                        ModuleThroughputText(
+                            monitor: appState.moduleThroughputMonitor,
+                            moduleID: module.id,
+                            style: .perSecond,
+                            prefix: " · "
+                        )
+                    }
+                    .font(.appCaption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
             }
 

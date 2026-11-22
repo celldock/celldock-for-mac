@@ -66,6 +66,7 @@ swiftc \
   "$ROOT/Sources/CellDock/SOCKSDNSResolver.swift" \
   "$ROOT/Sources/CellDock/SOCKSProxyModels.swift" \
   "$ROOT/Sources/CellDock/SOCKSProxyServer.swift" \
+  "$ROOT/Sources/CellDock/SOCKSProxyRequestLog.swift" \
   "$ROOT/Sources/CellDock/SOCKSUDPRelay.swift" \
   "$ROOT/Sources/CellDock/SOCKS5UpstreamAssociation.swift" \
   "$ROOT/Sources/CellDock/ModuleIdentityCache.swift" \
