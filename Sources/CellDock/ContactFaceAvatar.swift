@@ -211,7 +211,7 @@ struct ContactFaceShape: Shape {
     }
 }
 
-/// A number's avatar: a softly lit disc with the number's face on it.
+/// A number's avatar: a soft, nearly flat disc with the number's face on it.
 ///
 /// Lists show one line at a time, so their avatars carry no badge. Places
 /// that show a single call, such as the dialer and the in-call view, pass the
@@ -239,7 +239,7 @@ struct ContactFaceAvatar: View {
                     }
                     .compositingGroup()
             }
-            .shadow(color: .black.opacity(0.14), radius: size * 0.035, y: size * 0.03)
+            .shadow(color: .black.opacity(0.07), radius: size * 0.02, y: size * 0.014)
             .overlay(alignment: .bottomTrailing) {
                 if showsBadge {
                     LineBadge(text: badgeText ?? "", color: badgeColor, height: badgeHeight)
@@ -259,24 +259,14 @@ struct ContactFaceAvatar: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 ))
-            // A highlight at the upper left and a soft shade along the lower
-            // edge give the flat disc some volume.
+            // Only a faint, wide highlight. A strong one, or any shade along
+            // the rim, turns the disc into a glossy ball.
             Circle()
                 .fill(RadialGradient(
-                    colors: [Color.white.opacity(0.55), Color.white.opacity(0)],
-                    center: UnitPoint(x: 0.30, y: 0.24),
+                    colors: [Color.white.opacity(0.18), Color.white.opacity(0)],
+                    center: UnitPoint(x: 0.30, y: 0.22),
                     startRadius: 0,
-                    endRadius: size * 0.5
-                ))
-            Circle()
-                .fill(RadialGradient(
-                    stops: [
-                        .init(color: Color.black.opacity(0), location: 0.72),
-                        .init(color: Color.black.opacity(0.13), location: 1),
-                    ],
-                    center: UnitPoint(x: 0.5, y: 0.42),
-                    startRadius: 0,
-                    endRadius: size * 0.6
+                    endRadius: size * 0.62
                 ))
             ZStack {
                 ContactFaceShape(face: face, layer: .blush)
@@ -291,7 +281,7 @@ struct ContactFaceAvatar: View {
                         style: StrokeStyle(lineWidth: unit * 1.9, lineCap: .round, lineJoin: .round)
                     )
             }
-            .shadow(color: .black.opacity(0.18), radius: unit * 0.35, y: unit * 0.45)
+            .shadow(color: .black.opacity(0.10), radius: unit * 0.25, y: unit * 0.3)
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
