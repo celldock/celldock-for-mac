@@ -1593,6 +1593,40 @@ final class ModemService {
         }
     }
 
+    /// Writes a new SMS centre number to the SIM with AT+CSCA, then reads it
+    /// back. Reports a failure if the module rejects the write or the stored
+    /// value differs from the requested number.
+    func setSMSServiceCenter(
+        _ number: String,
+        completion: @escaping (ModemActionResult) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, self.isOpen else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("模块未连接"))) }
+                return
+            }
+            guard let writeCommand = SMSServiceCenterAdvisor.writeCommand(for: number) else {
+                DispatchQueue.main.async { completion(.failure(L10n.tr("短信中心号码无效。"))) }
+                return
+            }
+            let write = self.command(writeCommand, timeout: 5_000)
+            let read = self.command("AT+CSCA?", timeout: 3_000)
+            let stored = ATResponseParser.parseServiceCenter(read.output)
+            self.snapshot.smsServiceCenter = stored
+            self.publishSnapshot(self.snapshot)
+            guard write.isSuccess,
+                  SMSServiceCenterAdvisor.normalized(stored) == SMSServiceCenterAdvisor.normalized(number) else {
+                DispatchQueue.main.async {
+                    completion(.failure(write.error ?? L10n.tr("模块没有保存新的短信中心号码。")))
+                }
+                return
+            }
+            DispatchQueue.main.async {
+                completion(.success(L10n.tr("短信中心已改为 %@。", stored ?? number)))
+            }
+        }
+    }
+
     /// Switches voice calls on or off in the firmware of a data-only Quectel
     /// module. As with the IMS mode, the value is read back before the module
     /// is restarted to apply it, and nothing is written unless the current
@@ -1836,6 +1870,7 @@ final class ModemService {
         snapshot.simPhoneNumber = nil
         snapshot.simICCID = nil
         snapshot.simIMSI = nil
+        snapshot.smsServiceCenter = nil
         snapshot.operatorName = nil
         snapshot.registrationState = .unavailable
         snapshot.voiceRegistrationState = .unavailable
@@ -3483,6 +3518,7 @@ final class ModemService {
             snapshot.simPhoneNumber = nil
             snapshot.simICCID = nil
             snapshot.simIMSI = nil
+            snapshot.smsServiceCenter = nil
             snapshot.registrationState = .unavailable
             snapshot.voiceRegistrationState = .unavailable
             clearVoiceServiceEvidence()
@@ -3510,6 +3546,7 @@ final class ModemService {
             snapshot.simPhoneNumber = nil
             snapshot.simICCID = nil
             snapshot.simIMSI = nil
+            snapshot.smsServiceCenter = nil
             snapshot.registrationState = .unavailable
             snapshot.voiceRegistrationState = .unavailable
             clearVoiceServiceEvidence()
@@ -3531,6 +3568,7 @@ final class ModemService {
         if simIdentityChanged {
             snapshot.simPhoneNumber = nil
             snapshot.simIMSI = nil
+            snapshot.smsServiceCenter = nil
             didQuerySIMIdentity = false
         }
 
@@ -3538,6 +3576,12 @@ final class ModemService {
             let imsi = command("AT+CIMI", timeout: 3_000)
             if imsi.isSuccess {
                 snapshot.simIMSI = ATResponseParser.parseIMSI(imsi.output)
+            }
+        }
+        if snapshot.smsServiceCenter == nil {
+            let serviceCenter = command("AT+CSCA?", timeout: 3_000)
+            if serviceCenter.isSuccess {
+                snapshot.smsServiceCenter = ATResponseParser.parseServiceCenter(serviceCenter.output)
             }
         }
 

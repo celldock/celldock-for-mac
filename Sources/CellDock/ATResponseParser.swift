@@ -319,6 +319,16 @@ enum ATResponseParser {
         return nil
     }
 
+    /// Parses `+CSCA: "+8613344181200",145`.
+    static func parseServiceCenter(_ response: String) -> String? {
+        for line in normalizedLines(response) where line.uppercased().hasPrefix("+CSCA:") {
+            let value = line.dropFirst(6).split(separator: ",").first.map(String.init) ?? ""
+            let address = value.trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+            return address.isEmpty ? nil : address
+        }
+        return nil
+    }
+
     static func parseIMSI(_ response: String) -> String? {
         for line in normalizedLines(response) {
             let normalized = line.filter { $0 >= "0" && $0 <= "9" }

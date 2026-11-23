@@ -36,6 +36,7 @@ struct SIMManagementView: View {
     /// `SIMPhoneNumberPresentation.revealKey` of the number shown in full.
     @State private var revealedPhoneNumberKey: String?
     @State private var pendingSIMSlot: Int?
+    @State private var pendingSMSServiceCenter: SMSServiceCenterAdvisor.Recommendation?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
     @State private var deletingProfile: ESIMProfile?
@@ -173,6 +174,26 @@ struct SIMManagementView: View {
                 "卡槽 %lld 会离线，切回之前它收不到来电和短信。蜂窝网络会中断几秒，然后用卡槽 %lld 重新连接。",
                 Int64(selectedModem.simSlot ?? (pendingSIMSlot == 1 ? 2 : 1)),
                 Int64(pendingSIMSlot ?? 1)
+            ))
+        }
+        .alert(
+            L10n.tr("修改短信中心？"),
+            isPresented: Binding(
+                get: { pendingSMSServiceCenter != nil },
+                set: { if !$0 { pendingSMSServiceCenter = nil } }
+            ),
+            presenting: pendingSMSServiceCenter
+        ) { recommendation in
+            Button("取消", role: .cancel) { pendingSMSServiceCenter = nil }
+            Button(L10n.tr("修改")) {
+                pendingSMSServiceCenter = nil
+                appState.setSMSServiceCenter(recommendation.recommended, moduleID: selectedModuleID)
+            }
+        } message: { recommendation in
+            Text(L10n.tr(
+                "将把 SIM 卡中的短信中心从 %@ 改为 %@。此设置保存在 SIM 卡上。",
+                recommendation.current,
+                recommendation.recommended
             ))
         }
     }
@@ -1814,8 +1835,42 @@ struct SIMManagementView: View {
             informationRow(title: "运营商语音服务", value: voiceServiceText, valueColor: voiceServiceColor)
             Divider()
             informationRow(title: "短信服务", value: messageServiceText)
+            Divider()
+            informationRow(
+                title: "短信中心",
+                value: selectedModem.smsServiceCenter ?? L10n.tr("尚未读取"),
+                valueColor: smsServiceCenterRecommendation == nil ? .secondary : .orange
+            )
+            if let recommendation = smsServiceCenterRecommendation, selectedModem.isConnected {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(verbatim: L10n.tr(
+                        "这是中国电信 CDMA 时代的短信中心号码。在模组里用它发短信会显示已发送，但对方收不到。改为同一地区的 LTE 短信中心 %@ 即可正常送达；手机不受影响。",
+                        recommendation.recommended
+                    ))
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button(L10n.tr("改为 %@", recommendation.recommended)) {
+                            pendingSMSServiceCenter = recommendation
+                        }
+                        .adaptiveGlassButton()
+                        .controlSize(.small)
+                        .disabled(appState.isChangingSMSServiceCenter)
+                    }
+                }
+                .padding(.bottom, 10)
+            }
         }
         .adaptiveGlassCard()
+    }
+
+    private var smsServiceCenterRecommendation: SMSServiceCenterAdvisor.Recommendation? {
+        SMSServiceCenterAdvisor.recommendation(
+            imsi: selectedModem.simIMSI,
+            serviceCenter: selectedModem.smsServiceCenter
+        )
     }
 
     private var moduleInformationCard: some View {

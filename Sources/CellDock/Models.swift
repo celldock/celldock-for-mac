@@ -510,6 +510,8 @@ struct ModemSnapshot: Equatable {
     var simPhoneNumber: String?
     var simICCID: String?
     var simIMSI: String?
+    /// SMS centre address reported by AT+CSCA?.
+    var smsServiceCenter: String?
     var moduleIMEI: String?
     var usbNetMode: Int?
     var imsMode: Int?
