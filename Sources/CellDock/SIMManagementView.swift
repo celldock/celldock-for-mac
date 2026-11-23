@@ -36,6 +36,7 @@ struct SIMManagementView: View {
     /// `SIMPhoneNumberPresentation.revealKey` of the number shown in full.
     @State private var revealedPhoneNumberKey: String?
     @State private var pendingSIMSlot: Int?
+    @State private var pendingSMSServiceCenter: SMSServiceCenterAdvisor.Recommendation?
     @State private var showingAddESIM = false
     @State private var renamingProfile: ESIMProfile?
     @State private var deletingProfile: ESIMProfile?
@@ -173,6 +174,26 @@ struct SIMManagementView: View {
                 "卡槽 %lld 会离线，切回之前它收不到来电和短信。蜂窝网络会中断几秒，然后用卡槽 %lld 重新连接。",
                 Int64(selectedModem.simSlot ?? (pendingSIMSlot == 1 ? 2 : 1)),
                 Int64(pendingSIMSlot ?? 1)
+            ))
+        }
+        .alert(
+            L10n.tr("修改短信中心？"),
+            isPresented: Binding(
+                get: { pendingSMSServiceCenter != nil },
+                set: { if !$0 { pendingSMSServiceCenter = nil } }
+            ),
+            presenting: pendingSMSServiceCenter
+        ) { recommendation in
+            Button("取消", role: .cancel) { pendingSMSServiceCenter = nil }
+            Button(L10n.tr("修改")) {
+                pendingSMSServiceCenter = nil
+                appState.setSMSServiceCenter(recommendation.recommended, moduleID: selectedModuleID)
+            }
+        } message: { recommendation in
+            Text(L10n.tr(
+                "将把 SIM 卡中的短信中心从 %@ 改为 %@。此设置保存在 SIM 卡上。",
+                recommendation.current,
+                recommendation.recommended
             ))
         }
     }
@@ -1832,7 +1853,7 @@ struct SIMManagementView: View {
                     HStack {
                         Spacer()
                         Button(L10n.tr("改为 %@", recommendation.recommended)) {
-                            appState.setSMSServiceCenter(recommendation.recommended, moduleID: selectedModuleID)
+                            pendingSMSServiceCenter = recommendation
                         }
                         .adaptiveGlassButton()
                         .controlSize(.small)

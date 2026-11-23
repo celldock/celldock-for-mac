@@ -1593,10 +1593,9 @@ final class ModemService {
         }
     }
 
-    /// Switches voice calls on or off in the firmware of a data-only Quectel
-    /// module. As with the IMS mode, the value is read back before the module
-    /// is restarted to apply it, and nothing is written unless the current
-    /// value is one whose meaning is known.
+    /// Writes a new SMS centre number to the SIM with AT+CSCA, then reads it
+    /// back. Reports a failure if the module rejects the write or the stored
+    /// value differs from the requested number.
     func setSMSServiceCenter(
         _ number: String,
         completion: @escaping (ModemActionResult) -> Void
@@ -1628,6 +1627,10 @@ final class ModemService {
         }
     }
 
+    /// Switches voice calls on or off in the firmware of a data-only Quectel
+    /// module. As with the IMS mode, the value is read back before the module
+    /// is restarted to apply it, and nothing is written unless the current
+    /// value is one whose meaning is known.
     func setVoiceCallsEnabled(
         _ enabled: Bool,
         completion: @escaping (ModemActionResult) -> Void

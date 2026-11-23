@@ -1946,3 +1946,6 @@
 "短信中心号码无效。" = "The SMS centre number is not valid.";
 "模块没有保存新的短信中心号码。" = "The module did not save the new SMS centre number.";
 "短信中心已改为 %@。" = "SMS centre changed to %@.";
+"修改短信中心？" = "Change SMS Centre?";
+"将把 SIM 卡中的短信中心从 %@ 改为 %@。此设置保存在 SIM 卡上。" = "The SMS centre on the SIM will change from %@ to %@. This setting is stored on the SIM.";
+"修改" = "Change";
