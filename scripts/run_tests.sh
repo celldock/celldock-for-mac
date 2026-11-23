@@ -82,6 +82,7 @@ swiftc \
   "$ROOT/Sources/CellDock/EUICCServerTrust.swift" \
   "$ROOT/Sources/CellDock/EUICCHTTPSClient.swift" \
   "$ROOT/Sources/CellDock/ATResponseParser.swift" \
+  "$ROOT/Sources/CellDock/SMSServiceCenterAdvisor.swift" \
   "$ROOT/Sources/CellDock/SMSPDUDecoder.swift" \
   "$ROOT/Sources/CellDock/SMSPDUEncoder.swift" \
   "$ROOT/Sources/CellDock/SMSVerificationCode.swift" \

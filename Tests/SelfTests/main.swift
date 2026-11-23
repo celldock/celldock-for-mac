@@ -2085,6 +2085,32 @@ do {
         ModemHardwareFamily.classify(vendorName: nil, productName: "unknown") == .unknown,
         "unknown USB strings were classified as a supported hardware family"
     )
+    try expect(
+        ATResponseParser.parseServiceCenter("+CSCA: \"+8613344181200\",145\r\nOK") == "+8613344181200",
+        "CSCA response was not parsed"
+    )
+    try expect(
+        SMSServiceCenterAdvisor.recommendation(imsi: "460110123456789", serviceCenter: "+8613344181200")?
+            .recommended == "+316540942001",
+        "China Telecom CDMA-era SMSC was not flagged"
+    )
+    try expect(
+        SMSServiceCenterAdvisor.recommendation(imsi: "460030123456789", serviceCenter: "8613334262200")?
+            .recommended == "+316540942000",
+        "SMSC without + was not normalised"
+    )
+    try expect(
+        SMSServiceCenterAdvisor.recommendation(imsi: "460110123456789", serviceCenter: "+316540942001") == nil,
+        "a working SMSC was flagged"
+    )
+    try expect(
+        SMSServiceCenterAdvisor.recommendation(imsi: "460010123456789", serviceCenter: "+8613344181200") == nil,
+        "a non-China-Telecom SIM was flagged"
+    )
+    try expect(
+        SMSServiceCenterAdvisor.writeCommand(for: "+316540942001") == "AT+CSCA=\"+316540942001\",145",
+        "CSCA write command is wrong"
+    )
     try expect(ModemSnapshot().initialSetupState == .insertModule, "setup did not request module")
     let djiUSBConfiguration = ATResponseParser.parseUSBConfiguration(
         "+QCFG: \"usbcfg\",0x2CA3,0x4006,1,1,1,1,1,0,0\r\nOK"

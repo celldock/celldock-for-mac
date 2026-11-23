@@ -1935,3 +1935,11 @@
 "通话操作正在进行，请稍后重试。" = "Une opération d’appel est en cours. Réessayez dans un instant.";
 
 "通话已结束，原因未知" = "Appel terminé ; raison inconnue";
+
+/* SMS centre */
+"短信中心" = "Centre SMS";
+"这是中国电信 CDMA 时代的短信中心号码。在模组里用它发短信会显示已发送，但对方收不到。改为同一地区的 LTE 短信中心 %@ 即可正常送达；手机不受影响。" = "Ce numéro de centre SMS de China Telecom date de l'époque CDMA. Les messages envoyés depuis un module via ce centre apparaissent comme envoyés mais n'arrivent jamais. Passer au centre SMS LTE de la même région, %@, rétablit la distribution. Les téléphones ne sont pas concernés.";
+"改为 %@" = "Remplacer par %@";
+"短信中心号码无效。" = "Le numéro du centre SMS n'est pas valide.";
+"模块没有保存新的短信中心号码。" = "Le module n'a pas enregistré le nouveau numéro du centre SMS.";
+"短信中心已改为 %@。" = "Centre SMS remplacé par %@.";

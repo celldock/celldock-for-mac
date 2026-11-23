@@ -1814,8 +1814,42 @@ struct SIMManagementView: View {
             informationRow(title: "运营商语音服务", value: voiceServiceText, valueColor: voiceServiceColor)
             Divider()
             informationRow(title: "短信服务", value: messageServiceText)
+            Divider()
+            informationRow(
+                title: "短信中心",
+                value: selectedModem.smsServiceCenter ?? L10n.tr("尚未读取"),
+                valueColor: smsServiceCenterRecommendation == nil ? .secondary : .orange
+            )
+            if let recommendation = smsServiceCenterRecommendation, selectedModem.isConnected {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(verbatim: L10n.tr(
+                        "这是中国电信 CDMA 时代的短信中心号码。在模组里用它发短信会显示已发送，但对方收不到。改为同一地区的 LTE 短信中心 %@ 即可正常送达；手机不受影响。",
+                        recommendation.recommended
+                    ))
+                    .font(.appCaption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button(L10n.tr("改为 %@", recommendation.recommended)) {
+                            appState.setSMSServiceCenter(recommendation.recommended, moduleID: selectedModuleID)
+                        }
+                        .adaptiveGlassButton()
+                        .controlSize(.small)
+                        .disabled(appState.isChangingSMSServiceCenter)
+                    }
+                }
+                .padding(.bottom, 10)
+            }
         }
         .adaptiveGlassCard()
+    }
+
+    private var smsServiceCenterRecommendation: SMSServiceCenterAdvisor.Recommendation? {
+        SMSServiceCenterAdvisor.recommendation(
+            imsi: selectedModem.simIMSI,
+            serviceCenter: selectedModem.smsServiceCenter
+        )
     }
 
     private var moduleInformationCard: some View {

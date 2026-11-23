@@ -1938,3 +1938,11 @@
 "通话操作正在进行，请稍后重试。" = "A call operation is in progress. Try again shortly.";
 
 "通话已结束，原因未知" = "Call ended; reason unknown";
+
+/* SMS centre */
+"短信中心" = "SMS Centre";
+"这是中国电信 CDMA 时代的短信中心号码。在模组里用它发短信会显示已发送，但对方收不到。改为同一地区的 LTE 短信中心 %@ 即可正常送达；手机不受影响。" = "This is a China Telecom SMS centre number from the CDMA era. Messages sent through it from a module show as sent but never arrive. Switching to the LTE SMS centre for the same region, %@, makes them deliver. Phones are not affected.";
+"改为 %@" = "Change to %@";
+"短信中心号码无效。" = "The SMS centre number is not valid.";
+"模块没有保存新的短信中心号码。" = "The module did not save the new SMS centre number.";
+"短信中心已改为 %@。" = "SMS centre changed to %@.";
